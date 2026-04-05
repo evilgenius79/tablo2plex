@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:wiki.unraid.net)",
+      "WebFetch(domain:selfhosters.net)",
+      "WebFetch(domain:forums.unraid.net)",
+      "WebFetch(domain:docs.unraid.net)",
+      "WebFetch(domain:gennari.industries)",
+      "WebFetch(domain:cookiecode.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}

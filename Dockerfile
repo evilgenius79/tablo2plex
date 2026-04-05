@@ -15,6 +15,8 @@ RUN apt update && apt install -y --no-install-recommends \
 
 COPY . /app
 
+RUN chmod +x /app/entrypoint.sh
+
 EXPOSE 8181
 
 # create output directory (for mounted volume)
@@ -23,6 +25,7 @@ RUN mkdir /output
 # set .env variables that can be overridden
 ENV NAME="Tablo 4th Gen Proxy" \
     DEVICE_ID="12345678" \
+    PORT="8181" \
     LINEUP_UPDATE_INTERVAL=30 \
     CREATE_XML="false" \
     GUIDE_DAYS=2 \
@@ -32,6 +35,8 @@ ENV NAME="Tablo 4th Gen Proxy" \
     USER_NAME="user" \
     USER_PASS="pass" \
     GUIDE_UPDATE_INTERVAL=24 \
-    INCLUDE_OTT="true"
+    INCLUDE_OTT="true" \
+    IP_ADDRESS="" \
+    TABLO_DEVICE=""
 
-CMD node app.js --name $NAME --id $DEVICE_ID --channels $LINEUP_UPDATE_INTERVAL --xml $CREATE_XML --days $GUIDE_DAYS --pseudo $INCLUDE_PSEUDOTV_GUIDE --level $LOG_LEVEL --log $SAVE_LOG --outdir /output --user $USER_NAME --pass $USER_PASS --guide $GUIDE_UPDATE_INTERVAL --ott $INCLUDE_OTT
+ENTRYPOINT ["/app/entrypoint.sh"]

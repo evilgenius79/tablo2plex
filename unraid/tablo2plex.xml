@@ -1,0 +1,208 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>tablo2plex</Name>
+  <Repository>evilgenius79/tablo2plex</Repository>
+  <Registry>https://hub.docker.com/r/evilgenius79/tablo2plex</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release</TagDescription>
+  </Branch>
+  <Project>https://github.com/evilgenius79/tablo2plex</Project>
+  <Support>https://forums.unraid.net/topic/XXXXX-support-tablo2plex/</Support>
+  <Overview>Tablo2Plex is an HDHomeRun emulator that proxies live TV streams from your Tablo 4th Gen device to Plex. It allows Plex to discover your Tablo as if it were an HDHomeRun tuner, enabling live TV and DVR functionality.[br][br][b]First Run:[/b] Enter your Tablo username and password below. After the first successful login, credentials are encrypted and stored in the appdata folder as creds.bin. You can then remove your username/password from the container settings if desired.[br][br][b]Plex Setup:[/b] After starting, go to Plex Settings &gt; Live TV &amp; DVR &gt; Set Up. Plex should auto-discover the device, or manually enter http://[YOUR-SERVER-IP]:8181</Overview>
+  <Category>MediaApp:Video MediaServer:Video</Category>
+  <Icon>https://raw.githubusercontent.com/evilgenius79/tablo2plex/main/imgs/logo.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/evilgenius79/tablo2plex/main/unraid/tablo2plex.xml</TemplateURL>
+  <WebUI>http://[IP]:[PORT:8181]/</WebUI>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <Requires>Requires a Tablo 4th Gen device on your network and a Tablo account.</Requires>
+  <Changes>
+[h4]Version 1.0.10[/h4]
+- Added error logging improvements
+- Fixed guide file management
+- Added OTT channel support
+  </Changes>
+  <ExtraSearchTerms>tablo plex hdhomerun dvr live tv tuner proxy iptv ota antenna</ExtraSearchTerms>
+
+  <!-- ==================== REQUIRED SETTINGS ==================== -->
+
+  <Config Name="Web UI / Plex Port"
+          Target="8181"
+          Default="8181"
+          Mode="tcp"
+          Description="Port the emulator listens on. Plex connects to this port to discover the device and stream live TV."
+          Type="Port"
+          Display="always"
+          Required="true"
+          Mask="false">8181</Config>
+
+  <Config Name="Appdata / Output"
+          Target="/output"
+          Default="/mnt/user/appdata/tablo2plex"
+          Mode="rw"
+          Description="Persistent storage for credentials (creds.bin), channel lineup, guide data, and logs."
+          Type="Path"
+          Display="always"
+          Required="true"
+          Mask="false">/mnt/user/appdata/tablo2plex</Config>
+
+  <Config Name="Tablo Username"
+          Target="USER_NAME"
+          Default=""
+          Mode=""
+          Description="Your Tablo account email/username. Required on first run to generate encrypted credentials. Can be removed after creds.bin is created."
+          Type="Variable"
+          Display="always"
+          Required="true"
+          Mask="false"></Config>
+
+  <Config Name="Tablo Password"
+          Target="USER_PASS"
+          Default=""
+          Mode=""
+          Description="Your Tablo account password. Required on first run to generate encrypted credentials. Can be removed after creds.bin is created."
+          Type="Variable"
+          Display="always"
+          Required="true"
+          Mask="true"></Config>
+
+  <!-- ==================== COMMON SETTINGS ==================== -->
+
+  <Config Name="Device Name"
+          Target="NAME"
+          Default="Tablo 4th Gen Proxy"
+          Mode=""
+          Description="Name of the emulated HDHomeRun device that appears in Plex."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">Tablo 4th Gen Proxy</Config>
+
+  <Config Name="Device ID"
+          Target="DEVICE_ID"
+          Default="12345678"
+          Mode=""
+          Description="Fake device ID. Change this if you run multiple instances to avoid conflicts."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">12345678</Config>
+
+  <Config Name="Include OTT Channels"
+          Target="INCLUDE_OTT"
+          Default="true|false"
+          Mode=""
+          Description="Include Over-The-Top (streaming) channels in the channel lineup."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">true</Config>
+
+  <!-- ==================== GUIDE / XML SETTINGS ==================== -->
+
+  <Config Name="Create XML Guide"
+          Target="CREATE_XML"
+          Default="false|true"
+          Mode=""
+          Description="Generate an XML EPG guide from Tablo data instead of using Plex's built-in guide. More accurate but requires more processing."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">false</Config>
+
+  <Config Name="Guide Days"
+          Target="GUIDE_DAYS"
+          Default="2"
+          Mode=""
+          Description="Number of days of guide data to cache (1-7). More days = longer update time."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">2</Config>
+
+  <Config Name="Guide Update Interval (hours)"
+          Target="GUIDE_UPDATE_INTERVAL"
+          Default="24"
+          Mode=""
+          Description="How often to refresh the XML guide data, in hours."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">24</Config>
+
+  <Config Name="Lineup Update Interval (days)"
+          Target="LINEUP_UPDATE_INTERVAL"
+          Default="30"
+          Mode=""
+          Description="How often to re-scan the Tablo for channel lineup changes, in days."
+          Type="Variable"
+          Display="always"
+          Required="false"
+          Mask="false">30</Config>
+
+  <!-- ==================== ADVANCED SETTINGS ==================== -->
+
+  <Config Name="Static IP Address"
+          Target="IP_ADDRESS"
+          Default=""
+          Mode=""
+          Description="Set the IP address of tablo2plex statically. Leave blank to auto-detect."
+          Type="Variable"
+          Display="advanced"
+          Required="false"
+          Mask="false"></Config>
+
+  <Config Name="Tablo Device ID"
+          Target="TABLO_DEVICE"
+          Default=""
+          Mode=""
+          Description="Server ID of a specific Tablo device to use. Only needed if you have multiple Tablo devices on your account."
+          Type="Variable"
+          Display="advanced"
+          Required="false"
+          Mask="false"></Config>
+
+  <Config Name="Include PseudoTV Guide"
+          Target="INCLUDE_PSEUDOTV_GUIDE"
+          Default="false|true"
+          Mode=""
+          Description="Merge PseudoTV EPG data into the XML guide. Requires PseudoTV xmltv.xml at /.pseudotv/xmltv.xml"
+          Type="Variable"
+          Display="advanced"
+          Required="false"
+          Mask="false">false</Config>
+
+  <Config Name="PseudoTV Data"
+          Target="/.pseudotv"
+          Default=""
+          Mode="ro"
+          Description="Path to PseudoTV data directory containing xmltv.xml. Only needed if Include PseudoTV Guide is enabled."
+          Type="Path"
+          Display="advanced"
+          Required="false"
+          Mask="false"></Config>
+
+  <Config Name="Log Level"
+          Target="LOG_LEVEL"
+          Default="error|info|warn|debug"
+          Mode=""
+          Description="Logging verbosity. info=basics, error=info+errors, warn=more detail, debug=everything."
+          Type="Variable"
+          Display="advanced"
+          Required="false"
+          Mask="false">error</Config>
+
+  <Config Name="Save Log to File"
+          Target="SAVE_LOG"
+          Default="true|false"
+          Mode=""
+          Description="Save console output to a log file in the output directory."
+          Type="Variable"
+          Display="advanced"
+          Required="false"
+          Mask="false">true</Config>
+
+</Container>
