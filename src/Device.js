@@ -620,6 +620,8 @@ async function reqCreds() {
                     loginCreds.Authorization = `${loginCreds.token_type} ${loginCreds.access_token}`;
 
                     loggedIn = true;
+
+                    attempts = max_attempts;
                 }
             } else {
                 if (loginCreds.code) {
