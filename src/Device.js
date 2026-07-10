@@ -1637,45 +1637,80 @@ async function cacheGuideData() {
             const reqPathTD = path1 + el.identifier + "/airings/" + guideDay + "/";
 
             tasks.push(async () => {
-                // fresh headers per request — makeHTTPSRequest mutates them
-                const headers = {
-                    'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
-                    'Accept': '*/*',
-                    "Authorization": CREDS_DATA.lighthousetvAuthorization,
-                    'Lighthouse': CREDS_DATA.Lighthouse
+                // Tablo's cloud API intermittently returns 502s (more so under
+                // concurrency), so retry with exponential backoff + jitter.
+                // fresh headers per attempt — makeHTTPSRequest mutates them.
+                const MAX_ATTEMPTS = 4;
+
+                /**
+                 * @param {string} method
+                 * @param {boolean} justHeaders
+                 * @returns {Promise<any>}
+                 */
+                const fetchWithRetry = async (method, justHeaders = false) => {
+                    var lastError;
+
+                    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                        try {
+                            return await makeHTTPSRequest(method, host, reqPathTD, {
+                                'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
+                                'Accept': '*/*',
+                                "Authorization": CREDS_DATA.lighthousetvAuthorization,
+                                'Lighthouse': CREDS_DATA.Lighthouse
+                            }, "", justHeaders);
+                        } catch (error) {
+                            lastError = error;
+
+                            if (attempt < MAX_ATTEMPTS) {
+                                const backoff = Math.min(5000, 400 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 400);
+
+                                await new Promise(resolve => setTimeout(resolve, backoff));
+                            }
+                        }
+                    }
+
+                    throw lastError;
                 };
 
                 try {
-                    if (!FS.fileExists(file)) {
-                        // new file
-                        const dataIn1 = await makeHTTPSRequest("GET", host, reqPathTD, headers);
+                    var needsGet = true;
+
+                    if (FS.fileExists(file)) {
+                        // only re-download when the size changed
+                        try {
+                            const head = await fetchWithRetry("HEAD", true);
+
+                            const sizeIn = parseInt(head['content-length']);
+
+                            const stats = await fs.promises.stat(file);
+
+                            needsGet = isNaN(sizeIn) ? false : stats.size != sizeIn;
+                        } catch (error) {
+                            // HEAD failed — keep the existing file rather than
+                            // risk clobbering good data with a failed GET
+                            needsGet = false;
+                        }
+                    }
+
+                    if (needsGet) {
+                        const dataIn1 = await fetchWithRetry("GET");
 
                         if (dataIn1) {
                             await fs.promises.writeFile(file, dataIn1);
                         } else {
                             Logger.error(`Could not write ${fileName}`);
                         }
-                    } else {
-                        // check file size
-                        const head = await makeHTTPSRequest("HEAD", host, reqPathTD, headers, "", true);
-
-                        const sizeIn = parseInt(head['content-length']);
-
-                        const stats = await fs.promises.stat(file);
-
-                        if (stats.size != sizeIn) {
-                            // if they don't match, there is new data, get the file
-                            const dataIn1 = await makeHTTPSRequest("GET", host, reqPathTD, headers);
-
-                            await fs.promises.writeFile(file, dataIn1);
-                        }
                     }
                 } catch (error) {
-                    try {
-                        await fs.promises.writeFile(file, "[]");
-                    } catch { /* leave a missing file to be retried next run */ }
+                    // Only seed an empty file when none exists yet — never
+                    // overwrite previously-good guide data with [] on a failure.
+                    if (!FS.fileExists(file)) {
+                        try {
+                            await fs.promises.writeFile(file, "[]");
+                        } catch { /* leave missing to be retried next run */ }
+                    }
 
-                    Logger.error("On makeHTTPSRequest creating JSON:");
+                    Logger.error(`Guide fetch failed for ${fileName} after ${MAX_ATTEMPTS} attempts:`);
 
                     Logger.error(error);
                 } finally {
@@ -1687,8 +1722,9 @@ async function cacheGuideData() {
 
     // A few requests in flight at a time — with the keep-alive agent this
     // turns hundreds of serial TLS handshakes into a handful of reused
-    // connections without hammering the API.
-    await runWithConcurrency(tasks, 6);
+    // connections. Kept modest (4) since Tablo's cloud returns 502s under
+    // heavier concurrency; the per-request retry handles the rest.
+    await runWithConcurrency(tasks, 4);
 
     process.stdout.write('\n');
     // clear spam
