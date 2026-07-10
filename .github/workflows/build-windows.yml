@@ -2,6 +2,11 @@ name: Build Windows exe
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Publish a release with this tag (e.g. v1.0.12-eg1). Leave empty to just build.'
+        required: false
+        default: ''
   # push trigger so the build runs from this feature branch —
   # workflow_dispatch only works once the file is on the default branch
   push:
@@ -38,8 +43,11 @@ jobs:
           retention-days: 30
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
+          # on tag pushes the tag already exists; on manual dispatch the
+          # action creates the tag at the built commit
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: tablo2plex-win-x64.exe
           generate_release_notes: true
