@@ -2,6 +2,71 @@
 
 <img src="./imgs/logo.png" width="200" alt="logo">
 
+---
+
+## What's changed in this fork
+
+This fork carries a set of performance and security improvements on top of the
+original project. The full review with details and reasoning is in
+[PERFORMANCE_AND_SECURITY_REVIEW.md](./PERFORMANCE_AND_SECURITY_REVIEW.md).
+
+### Channel loading & switching performance
+
+- **Watch-session caching** — the Tablo's `/watch` response stays valid for
+  ~3 minutes, so it's now cached per channel. The first tune of a channel
+  still waits on the Tablo's own tuner spin-up (5–6 seconds of device
+  hardware time that no proxy can remove), but **switching back to a channel
+  watched in the last few minutes skips that wait entirely** and bursts
+  several seconds of already-produced video so the player's buffer fills at
+  once. Cached sessions are health-probed before reuse and fall back to a
+  fresh `/watch` automatically.
+- **Faster ffmpeg startup** — input probing limits (`-fflags
+  +nobuffer+genpts`, 1 s / 1 MB probe) cut several seconds off stream start
+  since the stream is copied, not transcoded. `-http_persistent 1` reuses one
+  connection for segment fetches, and `-muxdelay 0 -muxpreload 0` removes the
+  mpegts muxer's default 0.7 s of output buffering.
+- **Cleaner channel switches** — the tuner slot is reserved *before* the
+  async `/watch` call (fixes a race that could oversubscribe tuners during
+  fast switching), ffmpeg is killed with SIGKILL on disconnect so the tuner
+  frees instantly, response headers are flushed immediately, and ffmpeg spawn
+  errors/early exits are handled instead of hanging the response.
+- **No more event-loop stalls during playback** — `guide.xml` is served as a
+  stream instead of one big blocking read, the guide build uses async file
+  I/O, and the logger reuses a single write stream instead of opening the log
+  file for every message.
+- **Much faster guide/lineup updates** — guide files download 6 at a time
+  over a shared keep-alive connection instead of one serial TLS handshake per
+  file. Removed channels are also cleared from the lineup on update instead
+  of persisting until restart.
+
+### Security
+
+- **Per-install credentials key** — new installs encrypt `creds.bin` with a
+  random 32-byte key stored in `creds.key` (owner-only permissions) instead
+  of the key baked into the public source. Existing `creds.bin` files keep
+  working; re-run with `--creds` to upgrade. *If you move an install to
+  another machine, copy `creds.key` along with `creds.bin`.* A corrupted or
+  wrong-key creds file is now handled gracefully instead of crashing the app.
+- **Docker images can no longer bake in secrets** — `.env`, `creds.bin`,
+  `creds.key`, logs, and runtime state are excluded from the build context.
+- **Tokens are redacted in debug logs**, and log files are created with
+  owner-only permissions.
+- **Wildcard CORS removed** (Plex doesn't need it; it let any website a LAN
+  user visited probe the server) and `X-Forwarded-For` spoofing of logged IPs
+  disabled.
+- **Proper crypto randomness** (`crypto.randomBytes`/`randomUUID` instead of
+  a clock-seeded Mersenne Twister) and the `keypress` git dependency pinned
+  to a commit hash.
+
+### Build
+
+- **GitHub Actions Windows build** — the Actions tab has a "Build Windows
+  exe" workflow (manual "Run workflow" button on `main`; also auto-runs on
+  pushes to `claude/**` branches). Each run uploads a `tablo2plex-win-x64`
+  artifact.
+
+---
+
 __Tablo2Plex__ is a Node.js-based server app that emulates an HDHomeRun device to allow Plex to access live TV streams from a Tablo 4th Gen device. It dynamically proxies Tablo's M3U8 `.ts` segment streams and serves them in a format Plex understands, enabling live playback and DVR functionality within Plex.
 
 ## Features
