@@ -2,6 +2,11 @@ name: Build Windows exe
 
 on:
   workflow_dispatch:
+  # push trigger so the build runs from this feature branch —
+  # workflow_dispatch only works once the file is on the default branch
+  push:
+    branches:
+      - 'claude/**'
 
 jobs:
   build:
