@@ -22,6 +22,16 @@ The following fixes from this review are implemented on this branch:
 - §1.4 Shared keep-alive `https.Agent` + guide downloads run 6-at-a-time
   instead of serially — `src/Device.js`
 - §1.5 `parseLineup` clears stale channels before rebuilding — `src/Device.js`
+- Watch-session caching: `/watch` responses are cached per channel until
+  their `expires` time (~3 min). Retuning to a recently watched channel skips
+  the Tablo's 5-6 second tuner spin-up (measured in field debug logs), and
+  because the Tablo kept producing segments during the cached session, ffmpeg
+  bursts several seconds of video immediately so the client's buffer fills at
+  once. A cached session is probed (1.5 s timeout) before reuse and falls
+  back to a fresh `/watch` if the Tablo tore it down early. Also added
+  `-muxdelay 0 -muxpreload 0` to drop the mpegts muxer's default 0.7 s of
+  output buffering. Note: nothing proxy-side can remove the tuner spin-up on
+  a *cold* tune — that delay is the Tablo hardware itself.
 
 **Security**
 - §2.1 New installs generate a random 32-byte key (`creds.key`, mode `0600`)

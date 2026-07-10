@@ -101,6 +101,78 @@ function redactForLog(obj) {
 };
 
 /**
+ * Cache of recent Tablo watch sessions per channel.
+ *
+ * A /watch response stays valid for ~3 minutes, so flipping back to a
+ * recently watched channel can skip the 5-6 second tuner spin-up — and since
+ * the Tablo kept producing segments meanwhile, ffmpeg can burst a few
+ * seconds of video immediately, which fills the client's buffer at once.
+ *
+ * @type {{[channelId:string]: {playlist_url:string, expires:number}}}
+ */
+const WATCH_CACHE = {};
+
+/**
+ * Returns a playlist URL for the channel — from the session cache when the
+ * previous session is still alive, otherwise via a fresh /watch request.
+ *
+ * @param {string} channelId
+ * @returns {Promise<string|null>}
+ */
+async function getPlaylistUrl(channelId) {
+    const cached = WATCH_CACHE[channelId];
+
+    if (cached && cached.expires - Date.now() > 15000) {
+        // quick probe that the Tablo hasn't torn the session down early
+        try {
+            const probe = await fetch(cached.playlist_url, { signal: AbortSignal.timeout(1500) });
+
+            if (probe.ok) {
+                await probe.arrayBuffer();
+
+                Logger.debug(`Reusing cached watch session for ${channelId} — skipping tuner spin-up.`);
+
+                return cached.playlist_url;
+            }
+        } catch (error) {
+            // fall through to a fresh /watch
+        }
+
+        delete WATCH_CACHE[channelId];
+    }
+
+    const channelReq = await reqTabloDevice("POST", CREDS_DATA.device.url, `/guide/channels/${channelId}/watch`, CREDS_DATA.UUID, "lh");
+
+    /**
+     * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}}}
+     */
+    const channelJSON = JSON.parse(channelReq.toString());
+
+    if (channelJSON.playlist_url == undefined) {
+        Logger.error('playlist_url missing from requested channel:');
+
+        Logger.error(redactForLog(channelJSON));
+
+        return null;
+    }
+
+    Logger.debug("Tablo Response:");
+
+    Logger.debug(redactForLog(channelJSON));
+
+    const expires = new Date(channelJSON.expires).getTime();
+
+    if (!isNaN(expires)) {
+        WATCH_CACHE[channelId] = {
+            playlist_url: channelJSON.playlist_url,
+            expires: expires
+        };
+    }
+
+    return channelJSON.playlist_url;
+};
+
+/**
  * Runs async tasks with a fixed concurrency limit.
  *
  * @param {(() => Promise<void>)[]} tasks
@@ -253,18 +325,9 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
     };
 
     try {
-        const channelReq = await reqTabloDevice("POST", CREDS_DATA.device.url, `/guide/channels/${channelId}/watch`, CREDS_DATA.UUID, "lh");
+        const playlistUrl = await getPlaylistUrl(channelId);
 
-        /**
-         * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}}}
-         */
-        const channelJSON = JSON.parse(channelReq.toString());
-        // check if there is a playlist_url
-        if (channelJSON.playlist_url == undefined) {
-            Logger.error('playlist_url missing from requested channel:');
-
-            Logger.error(redactForLog(channelJSON));
-
+        if (playlistUrl == null) {
             Logger.error(selectedChannel);
 
             releaseSlot();
@@ -274,21 +337,20 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
             return;
         }
 
-        Logger.debug("Tablo Response:");
-
-        Logger.debug(redactForLog(channelJSON));
-
         // The stream is copied, not transcoded, so keep ffmpeg's input probing
         // small — the defaults buffer ~5s/5MB of HLS before the first output
-        // byte reaches the client.
+        // byte reaches the client. muxdelay/muxpreload drop the mpegts muxer's
+        // default 0.7s of output buffering.
         const ffmpeg = spawn('ffmpeg', [
             '-fflags', '+nobuffer+genpts',
             '-analyzeduration', '1000000',
             '-probesize', '1000000',
             '-http_persistent', '1',
-            '-i', channelJSON.playlist_url,
+            '-i', playlistUrl,
             '-c', 'copy',
             '-f', 'mpegts',
+            '-muxdelay', '0',
+            '-muxpreload', '0',
             '-v', `repeat+level+${CONST.FFMPEG_LOG_LEVEL}`,
             'pipe:1'
         ]);
