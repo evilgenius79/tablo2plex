@@ -25,6 +25,11 @@ original project. The full review with details and reasoning is in
   since the stream is copied, not transcoded. `-http_persistent 1` reuses one
   connection for segment fetches, and `-muxdelay 0 -muxpreload 0` removes the
   mpegts muxer's default 0.7 s of output buffering.
+- **Warm tuner (opt-in)** — set `WARM_TUNER_SECONDS` (e.g. `60`) to keep a
+  tuner alive briefly after you stop watching, so flipping back to a channel
+  is instant instead of waiting on the Tablo tuner spin-up again. A warm tuner
+  occupies one physical tuner for that window but is auto-reclaimed the moment
+  all tuners are needed for new streams. Defaults to `0` (off).
 - **Cleaner channel switches** — the tuner slot is reserved *before* the
   async `/watch` call (fixes a race that could oversubscribe tuners during
   fast switching), ffmpeg is killed with SIGKILL on disconnect so the tuner

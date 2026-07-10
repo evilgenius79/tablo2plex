@@ -198,9 +198,128 @@ async function runWithConcurrency(tasks, limit) {
 var TUNER_COUNT = 2;
 
 /**
- * Count for running streams
+ * Count for running streams (active streams AND warm-held tuners).
  */
 var CURRENT_STREAMS = 0;
+
+/**
+ * How long (seconds) to keep a tuner session alive after the client
+ * disconnects, so flipping back to a just-watched channel is instant instead
+ * of paying the Tablo's 5-6s tuner spin-up again.
+ *
+ * Opt-in: a warm tuner still occupies a physical tuner, so this trades tuner
+ * availability for switch speed. 0 disables it (default). Set e.g. 60 to make
+ * quick channel surfing instant. Read from env directly to avoid the full
+ * Constants plumbing while this is experimental.
+ */
+const WARM_TUNER_SECONDS = Math.max(0, parseInt(process.env.WARM_TUNER_SECONDS || "0", 10) || 0);
+
+/**
+ * Channels currently held warm after a client left.
+ *
+ * Each entry holds exactly one slot in CURRENT_STREAMS, released when the
+ * session is evicted (grace expired, keepalive failed, or the slot was
+ * reclaimed for a different channel).
+ *
+ * @type {{[channelId:string]: {keepalive: NodeJS.Timeout, evict: NodeJS.Timeout, since: number}}}
+ */
+const WARM_SESSIONS = {};
+
+/**
+ * Fully releases a warm session and frees its tuner slot.
+ *
+ * @param {string} channelId
+ */
+function evictWarm(channelId) {
+    const warm = WARM_SESSIONS[channelId];
+
+    if (!warm) {
+        return;
+    }
+
+    clearInterval(warm.keepalive);
+
+    clearTimeout(warm.evict);
+
+    delete WARM_SESSIONS[channelId];
+
+    CURRENT_STREAMS = Math.max(0, CURRENT_STREAMS - 1);
+
+    Logger.info(`Released warm tuner for ${channelId}.`);
+};
+
+/**
+ * Evicts the oldest warm session to free a slot for a new stream.
+ *
+ * @returns {boolean} true if a slot was freed
+ */
+function evictOldestWarm() {
+    var oldestId = null;
+
+    var oldestSince = Infinity;
+
+    for (const id in WARM_SESSIONS) {
+        if (WARM_SESSIONS[id].since < oldestSince) {
+            oldestSince = WARM_SESSIONS[id].since;
+
+            oldestId = id;
+        }
+    }
+
+    if (oldestId != null) {
+        evictWarm(oldestId);
+
+        return true;
+    }
+
+    return false;
+};
+
+/**
+ * Keeps a channel's tuner session alive after the client disconnects by
+ * periodically re-fetching its playlist. The held slot is handed off from the
+ * request that started it — this function does not change CURRENT_STREAMS.
+ *
+ * @param {string} channelId
+ */
+function startWarm(channelId) {
+    // reset any existing warm timers for this channel
+    const existing = WARM_SESSIONS[channelId];
+
+    if (existing) {
+        clearInterval(existing.keepalive);
+
+        clearTimeout(existing.evict);
+    }
+
+    const keepalive = setInterval(async () => {
+        const cached = WATCH_CACHE[channelId];
+
+        if (!cached) {
+            evictWarm(channelId);
+
+            return;
+        }
+
+        try {
+            const probe = await fetch(cached.playlist_url, { signal: AbortSignal.timeout(2500) });
+
+            if (probe.ok) {
+                await probe.arrayBuffer();
+            } else {
+                evictWarm(channelId);
+            }
+        } catch (error) {
+            evictWarm(channelId);
+        }
+    }, 10000);
+
+    const evict = setTimeout(() => evictWarm(channelId), WARM_TUNER_SECONDS * 1000);
+
+    WARM_SESSIONS[channelId] = { keepalive, evict, since: Date.now() };
+
+    Logger.info(`Keeping ${channelId} tuner warm for ${WARM_TUNER_SECONDS}s.`);
+};
 
 /**
  * @typedef {OtaType | OttType} channelLineup
@@ -296,29 +415,51 @@ var CURRENT_STREAMS = 0;
  * @param {{GuideNumber:string, GuideName:string, URL:string, type:string, srcURL:string, streamUrl: string}}  selectedChannel
  */
 async function handleStreams(req, res, ip, channelId, selectedChannel){
-    if (CURRENT_STREAMS >= TUNER_COUNT) {
-        Logger.error(`Client ${ip && ip.replace(/::ffff:/, "")} connected to ${channelId}, but max streams are running.`);
-
-        res.status(500).send('Failed to start stream');
-
-        return;
-    }
-
-    // Only OTA channels consume a physical tuner. Reserve the slot before any
-    // awaits so concurrent requests can't both pass the check and oversubscribe.
+    // Only OTA channels consume a physical tuner.
     const usesTuner = selectedChannel.type == "ota";
 
-    if (usesTuner) {
+    // Adopt the slot from a warm session for this same channel (instant
+    // switch back), otherwise reserve a new slot before any awaits so
+    // concurrent requests can't both pass the check and oversubscribe.
+    const adoptedWarm = usesTuner && WARM_SESSIONS[channelId] != null;
+
+    if (adoptedWarm) {
+        const warm = WARM_SESSIONS[channelId];
+
+        clearInterval(warm.keepalive);
+
+        clearTimeout(warm.evict);
+
+        delete WARM_SESSIONS[channelId];
+        // slot stays counted — this request now owns it
+    } else if (usesTuner) {
+        if (CURRENT_STREAMS >= TUNER_COUNT) {
+            // all slots busy — reclaim one from a warm (idle) session if any
+            evictOldestWarm();
+        }
+
+        if (CURRENT_STREAMS >= TUNER_COUNT) {
+            Logger.error(`Client ${ip && ip.replace(/::ffff:/, "")} connected to ${channelId}, but max streams are running.`);
+
+            res.status(500).send('Failed to start stream');
+
+            return;
+        }
+
         CURRENT_STREAMS += 1;
     }
 
     var released = false;
 
+    // Set when the slot is handed to a warm session on disconnect so
+    // releaseSlot() does not also decrement it.
+    var handedToWarm = false;
+
     const releaseSlot = () => {
         if (!released) {
             released = true;
 
-            if (usesTuner) {
+            if (usesTuner && !handedToWarm) {
                 CURRENT_STREAMS -= 1;
             }
         }
@@ -355,12 +496,50 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
             'pipe:1'
         ]);
 
-        // The client is gone (or ffmpeg is dead), so a graceful shutdown buys
-        // nothing — SIGKILL frees the Tablo tuner session immediately.
+        // ffmpeg failed/exited — free the slot immediately, no warm-keeping.
         const cleanup = () => {
             releaseSlot();
 
             ffmpeg.kill('SIGKILL');
+        };
+
+        var clientGone = false;
+
+        // The client left. Stop pulling into ffmpeg (SIGKILL — a graceful
+        // shutdown buys nothing once the pipe is dead). If warm-keeping is
+        // enabled and the session is still valid, hand this slot to a warm
+        // session so switching back is instant; otherwise release it.
+        const onClientGone = () => {
+            if (clientGone) {
+                return;
+            }
+
+            clientGone = true;
+
+            ffmpeg.kill('SIGKILL');
+
+            const cached = WATCH_CACHE[channelId];
+
+            const canWarm = usesTuner &&
+                WARM_TUNER_SECONDS > 0 &&
+                cached != null &&
+                cached.expires - Date.now() > 5000;
+
+            if (canWarm && !released) {
+                handedToWarm = true;
+
+                released = true; // this request no longer owns the slot
+
+                startWarm(channelId);
+            } else {
+                releaseSlot();
+            }
+
+            if (usesTuner) {
+                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId}, killing ffmpeg`);
+            } else {
+                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId} (IPTV), killing ffmpeg`);
+            }
         };
 
         if (usesTuner) {
@@ -395,6 +574,8 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
         ffmpeg.on('error', (error) => {
             Logger.error('ffmpeg failed to start:', error.message);
 
+            clientGone = true; // don't warm-keep a broken session
+
             cleanup();
 
             if (!res.headersSent) {
@@ -410,21 +591,11 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
             }
         });
 
-        req.on('close', () => {
-            cleanup();
-
-            if (usesTuner) {
-                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId}, killing ffmpeg`);
-            } else {
-                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId} (IPTV), killing ffmpeg`);
-            }
-        });
-
         // req 'close' does not always fire when the response side ends first,
-        // so also release on the response closing.
-        res.on('close', () => {
-            cleanup();
-        });
+        // so listen on both; onClientGone is guarded against double-running.
+        req.on('close', onClientGone);
+
+        res.on('close', onClientGone);
 
         return;
     } catch (error) {

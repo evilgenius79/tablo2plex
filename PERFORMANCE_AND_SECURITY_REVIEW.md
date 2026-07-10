@@ -32,6 +32,21 @@ The following fixes from this review are implemented on this branch:
   `-muxdelay 0 -muxpreload 0` to drop the mpegts muxer's default 0.7 s of
   output buffering. Note: nothing proxy-side can remove the tuner spin-up on
   a *cold* tune — that delay is the Tablo hardware itself.
+- Warm tuner (opt-in, `WARM_TUNER_SECONDS`, default off): keeps a tuner
+  session alive for N seconds after the client disconnects by periodically
+  re-fetching its playlist, so switching back is instant. A warm session
+  holds a real tuner slot (`CURRENT_STREAMS`) and is evicted when the grace
+  expires, a keepalive fetch fails, or the slot is reclaimed for a new
+  stream (oldest warm session evicted first). — `src/Device.js`
+
+### Device / firmware recon
+
+- `tools/device-info.js` — standalone helper that reuses the app's creds and
+  device-auth signing to dump the full `/server/info` (which carries the
+  firmware version) and probe a handful of candidate device endpoints.
+  Read-only; a starting point for OTA/firmware investigation. Actually
+  pulling the OTA image is done off-box (capture the device's update-check
+  traffic, then `binwalk -e` the downloaded image).
 
 **Security**
 - §2.1 New installs generate a random 32-byte key (`creds.key`, mode `0600`)
