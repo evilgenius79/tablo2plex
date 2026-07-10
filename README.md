@@ -39,10 +39,21 @@ original project. The full review with details and reasoning is in
   stream instead of one big blocking read, the guide build uses async file
   I/O, and the logger reuses a single write stream instead of opening the log
   file for every message.
-- **Much faster guide/lineup updates** — guide files download 6 at a time
-  over a shared keep-alive connection instead of one serial TLS handshake per
-  file. Removed channels are also cleared from the lineup on update instead
-  of persisting until restart.
+- **Much faster guide/lineup updates** — guide files download several at a
+  time over a shared keep-alive connection instead of one serial TLS
+  handshake per file, and retry automatically on Tablo's intermittent cloud
+  `502`s (without blanking previously-good guide data). Removed channels are
+  also cleared from the lineup on update instead of persisting until restart.
+
+### Reliability
+
+- **Automatic session re-login** — Tablo's session tokens expire after a
+  while, and when they do the device rejects stream requests with
+  "Authentication failure" (streams stop starting until you re-enter
+  credentials). If `USER_NAME`/`USER_PASS` are set in `.env`, the app now
+  detects that rejection, silently logs back in to refresh the token, saves
+  it, and retries the stream — no manual re-cred needed. Without stored
+  credentials it logs a clear message telling you to re-authenticate.
 
 ### Security
 

@@ -39,6 +39,19 @@ The following fixes from this review are implemented on this branch:
   expires, a keepalive fetch fails, or the slot is reclaimed for a new
   stream (oldest warm session evicted first). — `src/Device.js`
 
+### Reliability
+
+- Guide downloads retry on Tablo's intermittent cloud 502s with exponential
+  backoff + jitter, and no longer overwrite an existing good guide file with
+  `[]` on failure (stale data beats no data). Concurrency eased to 4.
+  — `src/Device.js`
+- Automatic session re-login: Tablo session tokens expire, after which the
+  device rejects `/watch` with `unauthorized` / "Authentication failure" and
+  streams stop starting. When `USER_NAME`/`USER_PASS` are configured, the
+  proxy detects that, silently re-logs in (reusing the stored profile/device
+  selection), refreshes and persists the tokens, and retries the stream once.
+  Concurrent failures collapse onto a single refresh. — `src/Device.js`
+
 ### Device / firmware recon
 
 - `tools/device-info.js` — standalone helper that reuses the app's creds and

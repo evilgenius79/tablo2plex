@@ -113,6 +113,119 @@ function redactForLog(obj) {
 const WATCH_CACHE = {};
 
 /**
+ * True when a device response is an expired-session / auth rejection.
+ *
+ * @param {any} json
+ * @returns {boolean}
+ */
+function isUnauthorized(json) {
+    return !!(json && json.error && (
+        json.error.code == "unauthorized" ||
+        /auth/i.test(json.error.description || "")
+    ));
+};
+
+/**
+ * In-flight token refresh, shared so many channels failing at once trigger
+ * only a single re-login.
+ *
+ * @type {Promise<boolean>|null}
+ */
+var REFRESH_INFLIGHT = null;
+
+/**
+ * Silently re-logs in with the stored USER_NAME/USER_PASS to refresh the
+ * expired Tablo session tokens, reusing the already-selected profile/device,
+ * then persists the refreshed creds. Returns whether it succeeded.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function refreshTokens() {
+    if (CONST.USER_NAME == null || CONST.USER_PASS == null) {
+        Logger.error("Session token expired but USER_NAME/USER_PASS are not set — cannot auto re-login. Re-run the app with --creds (or delete creds.bin) to log in again.");
+
+        return false;
+    }
+
+    if (!CREDS_DATA.profile || !CREDS_DATA.device) {
+        Logger.error("Cannot refresh tokens — stored profile/device missing. Re-run credentials.");
+
+        return false;
+    }
+
+    const host = "lighthousetv.ewscloud.com";
+
+    try {
+        // 1. log in for a fresh access token
+        const loginResp = JSON.parse(await makeHTTPSRequest("POST", host, "/api/v2/login/", {
+            'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
+            'Content-Type': 'application/json',
+            'Accept': '*/*'
+        }, JSON.stringify({ password: CONST.USER_PASS, email: CONST.USER_NAME })));
+
+        if (!loginResp.access_token || !loginResp.token_type) {
+            Logger.error("Auto re-login failed: no access token returned.");
+
+            return false;
+        }
+
+        const authorization = `${loginResp.token_type} ${loginResp.access_token}`;
+
+        // 2. re-select the stored profile/device for a fresh Lighthouse token
+        const selectResp = JSON.parse(await makeHTTPSRequest("POST", host, "/api/v2/account/select/", {
+            'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
+            'Content-Type': 'application/json',
+            'Accept': '*/*',
+            'Authorization': authorization
+        }, JSON.stringify({ pid: CREDS_DATA.profile.identifier, sid: CREDS_DATA.device.serverId })));
+
+        if (!selectResp.token) {
+            Logger.error("Auto re-login failed: no account token returned.");
+
+            return false;
+        }
+
+        CREDS_DATA.lighthousetvAuthorization = authorization;
+
+        CREDS_DATA.Lighthouse = selectResp.token;
+
+        // persist the refreshed tokens so a restart keeps them
+        try {
+            const key = FS.fileExists(KEY_FILE) ? FS.readFile(KEY_FILE) : Encryption.newKey();
+
+            if (!FS.fileExists(KEY_FILE)) {
+                FS.writeFile(key, KEY_FILE, 0o600);
+            }
+
+            FS.writeFile(Encryption.crypt(JSON.stringify(CREDS_DATA), key), CONST.CREDS_FILE, 0o600);
+        } catch (error) {
+            Logger.error("Refreshed tokens but could not persist creds:", error);
+        }
+
+        Logger.info("Tablo session token refreshed via auto re-login.");
+
+        return true;
+    } catch (error) {
+        Logger.error("Auto re-login failed:", error);
+
+        return false;
+    }
+};
+
+/**
+ * Refreshes tokens, collapsing concurrent callers onto one attempt.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function refreshTokensOnce() {
+    if (!REFRESH_INFLIGHT) {
+        REFRESH_INFLIGHT = refreshTokens().finally(() => { REFRESH_INFLIGHT = null; });
+    }
+
+    return REFRESH_INFLIGHT;
+};
+
+/**
  * Returns a playlist URL for the channel — from the session cache when the
  * previous session is still alive, otherwise via a fresh /watch request.
  *
@@ -144,9 +257,22 @@ async function getPlaylistUrl(channelId) {
     const channelReq = await reqTabloDevice("POST", CREDS_DATA.device.url, `/guide/channels/${channelId}/watch`, CREDS_DATA.UUID, "lh");
 
     /**
-     * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}}}
+     * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}, error?: {code:string, description:string}}}
      */
-    const channelJSON = JSON.parse(channelReq.toString());
+    var channelJSON = JSON.parse(channelReq.toString());
+
+    // The device rejects the watch when the stored Tablo session token has
+    // expired ("unauthorized" / "Authentication failure"). Try a silent
+    // re-login (needs USER_NAME/USER_PASS) and one retry before giving up.
+    if (channelJSON.playlist_url == undefined && isUnauthorized(channelJSON)) {
+        Logger.warn("Tablo rejected the watch request as unauthorized — attempting token refresh...");
+
+        if (await refreshTokensOnce()) {
+            const retryReq = await reqTabloDevice("POST", CREDS_DATA.device.url, `/guide/channels/${channelId}/watch`, CREDS_DATA.UUID, "lh");
+
+            channelJSON = JSON.parse(retryReq.toString());
+        }
+    }
 
     if (channelJSON.playlist_url == undefined) {
         Logger.error('playlist_url missing from requested channel:');
