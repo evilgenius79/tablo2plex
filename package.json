@@ -26,7 +26,7 @@
         "dotenv": "^16.4.1",
         "express": "^5.1.0",
         "inquirer": "^12.9.6",
-        "keypress": "github:hearhellacopters/keypress",
+        "keypress": "github:hearhellacopters/keypress#7d97416adb404547d07569e6cf5895638690b7a1",
         "xml-writer": "^1.7.0"
     },
     "engines": {

@@ -92,8 +92,9 @@ function _increase_path(dir, current_folder, current_string, current_array) {
  * 
  * @param {string} targetPath - The path to check or create.
  * @param {any?} fileData - Data for the file
+ * @param {number|undefined} mode - Optional file mode (e.g. 0o600 for sensitive files)
  */
-function _ensurePathExists(targetPath, fileData) {
+function _ensurePathExists(targetPath, fileData, mode = undefined) {
     const isFile = !!path.extname(targetPath);
 
     try {
@@ -120,7 +121,7 @@ function _ensurePathExists(targetPath, fileData) {
 
             if (fileData) {
                 // writes file data if supplied
-                fs.writeFileSync(targetPath, fileData);
+                fs.writeFileSync(targetPath, fileData, mode != undefined ? { mode: mode } : undefined);
             }
         }
     } catch (err) {
@@ -417,16 +418,17 @@ class FS {
      * @static
      * @param {Buffer|string|object} data - File data
      * @param {string} srcPath - Full path to file including the file name.
+     * @param {number|undefined} mode - Optional file mode (e.g. 0o600 for sensitive files)
      * @throws {Error} if data is not writable.
      */
-    static writeFile(data, srcPath) {
+    static writeFile(data, srcPath, mode = undefined) {
         // stringify if needed
         if (typeof data == "object" && !(data instanceof Buffer)) {
             data = JSON.stringify(data, null, 2);
         }
-        
+
         if (data instanceof Buffer || typeof data == "string") {
-            _ensurePathExists(srcPath, data);
+            _ensurePathExists(srcPath, data, mode);
         } else {
             Logger.error("Data supplied to be written was not in a JSON format");
 

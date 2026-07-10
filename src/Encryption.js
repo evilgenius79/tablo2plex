@@ -9,7 +9,9 @@ const {
     createHmac,
     createHash,
     createCipheriv,
-    createDecipheriv
+    createDecipheriv,
+    randomBytes,
+    randomUUID
 } = require("crypto");
 
 /**
@@ -544,38 +546,58 @@ function _UUID(version = 4, options = {}, asBuffer = false) {
 };
 
 /**
- * Encryption functions 
+ * Derives the legacy creds key from the built-in (or env supplied) constant.
+ *
+ * Only kept so creds files from older installs still decrypt — new installs
+ * use a random per-install key instead.
+ *
+ * @returns {Buffer}
+ */
+function _legacyKey() {
+    const RSA = process.env.RSA == undefined ? "30818902818100B507AAAC6B6B1BA5CE02B8512381159ECFD9CD32D6EEADCAFF459EA7E2210819C2D915F437E30871DDA190F19B8898038E1E7863A21699CDA5BC6C84C49D935AFAFFE1D2F16B0C662DC8941D8751FB7A36AC22F5980EDF92FCF7756FC6FCFD967A73303C7CD7030C681799C18E0A2F2D2B69C9F7BD8ADE05731BB179F354F0E90203010001" : process.env.RSA;
+
+    const buff = Buffer.from(RSA, "hex");
+
+    const keyBuff = Buffer.alloc(32, 0);
+
+    for (let i = 0; i < buff.length / 4; i++) {
+        const el1 = buff.readUInt32LE(i * 4);
+
+        const inner = i % (keyBuff.length / 4);
+
+        const num = keyBuff.readInt32LE(inner * 4);
+
+        keyBuff.writeInt32LE(num ^ el1, inner * 4);
+    }
+
+    return keyBuff;
+};
+
+/**
+ * Encryption functions
  */
 class Encryption {
     /**
-     * 
-     * @param {string} creds - stringified creds
+     * Generates a random 32 byte key for creds encryption.
+     *
      * @returns {Buffer}
      */
-    static crypt(creds) {
-        const RSA = process.env.RSA == undefined ? "30818902818100B507AAAC6B6B1BA5CE02B8512381159ECFD9CD32D6EEADCAFF459EA7E2210819C2D915F437E30871DDA190F19B8898038E1E7863A21699CDA5BC6C84C49D935AFAFFE1D2F16B0C662DC8941D8751FB7A36AC22F5980EDF92FCF7756FC6FCFD967A73303C7CD7030C681799C18E0A2F2D2B69C9F7BD8ADE05731BB179F354F0E90203010001" : process.env.RSA;
+    static newKey() {
+        return randomBytes(32);
+    };
 
-        const buff = Buffer.from(RSA, "hex");
+    /**
+     *
+     * @param {string} creds - stringified creds
+     * @param {Buffer|undefined} key - 32 byte key (falls back to the legacy built-in key)
+     * @returns {Buffer}
+     */
+    static crypt(creds, key = undefined) {
+        const keyBuff = (key instanceof Buffer && key.length == 32) ? key : _legacyKey();
 
-        const keyBuff = Buffer.alloc(32, 0);
+        const seedBuff = randomBytes(4);
 
-        for (let i = 0; i < buff.length / 4; i++) {
-            const el1 = buff.readUInt32LE(i * 4);
-
-            const inner = i % (keyBuff.length / 4);
-
-            const num = keyBuff.readInt32LE(inner * 4);
-
-            keyBuff.writeInt32LE(num ^ el1, inner * 4);
-        }
-
-        const setup = new MersenneTwister();
-
-        const seed = setup.random_int();
-
-        const seedBuff = Buffer.alloc(4);
-
-        seedBuff.writeUInt32LE(seed);
+        const seed = seedBuff.readUInt32LE();
 
         const mt = new MersenneTwister(seed ^ 0xffffffff);
 
@@ -597,11 +619,7 @@ class Encryption {
 
         cipher.setAutoPadding(true);
 
-        cipher.write(creds);
-
-        cipher.end();
-
-        const encrypted = Buffer.concat([seedBuff, cipher.read()]);
+        const encrypted = Buffer.concat([seedBuff, cipher.update(creds), cipher.final()]);
 
         return encrypted;
     };
@@ -609,24 +627,11 @@ class Encryption {
     /**
      * Check data with 0x7b
      * @param {Buffer} creds - file buffer of creds
+     * @param {Buffer|undefined} key - 32 byte key (falls back to the legacy built-in key)
      * @returns {Buffer}
      */
-    static decrypt(creds) {
-        const RSA = process.env.RSA == undefined ? "30818902818100B507AAAC6B6B1BA5CE02B8512381159ECFD9CD32D6EEADCAFF459EA7E2210819C2D915F437E30871DDA190F19B8898038E1E7863A21699CDA5BC6C84C49D935AFAFFE1D2F16B0C662DC8941D8751FB7A36AC22F5980EDF92FCF7756FC6FCFD967A73303C7CD7030C681799C18E0A2F2D2B69C9F7BD8ADE05731BB179F354F0E90203010001" : process.env.RSA;
-
-        const buff = Buffer.from(RSA, "hex");
-
-        const keyBuff = Buffer.alloc(32, 0);
-
-        for (let i = 0; i < buff.length / 4; i++) {
-            const el1 = buff.readUInt32LE(i * 4);
-
-            const inner = i % (keyBuff.length / 4);
-
-            const num = keyBuff.readInt32LE(inner * 4);
-
-            keyBuff.writeInt32LE(num ^ el1, inner * 4);
-        }
+    static decrypt(creds, key = undefined) {
+        const keyBuff = (key instanceof Buffer && key.length == 32) ? key : _legacyKey();
 
         const seed = creds.readUInt32LE();
 
@@ -650,11 +655,14 @@ class Encryption {
 
         cipher.setAutoPadding(true);
 
-        cipher.write(creds.subarray(4, creds.length));
-
-        cipher.end();
-
-        return cipher.read();
+        try {
+            return Buffer.concat([cipher.update(creds.subarray(4, creds.length)), cipher.final()]);
+        } catch (error) {
+            // wrong key or corrupted file — return a buffer that fails the
+            // caller's 0x7B check so it's handled as a bad creds file
+            // instead of crashing the process with a stream error event
+            return Buffer.alloc(1);
+        }
     };
 
      /**
@@ -685,7 +693,7 @@ class Encryption {
      * Generates a UUID as Hex string.
      */
     static UUID(){
-        return _UUID();
+        return randomUUID();
     }
 };
 

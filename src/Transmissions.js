@@ -30,15 +30,9 @@ async function _middleware(req, res, next, port) {
 
     const path = req.path;
 
-    // Allow any origin (you can specify a specific origin if needed)
-    res.header('Access-Control-Allow-Origin', '*');
-
-    // Allowed headers (customize as needed)
-    //res.header('Access-Control-Allow-Headers', 'Origin, Access-Control-Allow-Origin, X-Requested-With, Content-Type, Accept, Authorization');
-
-    // Allowed methods (customize as needed)
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-
+    // No CORS headers on purpose — Plex talks to this server directly (not
+    // from a browser), and a wildcard origin would let any website a LAN
+    // user visits probe the server and tie up tuners.
 
     if (!(path == "/discover.json" || path == "/lineup_status.json")) {
         Logger.debug(`Req ${ip.replace(/::ffff:/, "")}:${port}${path}`);
@@ -112,7 +106,9 @@ async function runServer() {
     } else {
         const app = express();
 
-        app.set('trust proxy', true);
+        // no reverse proxy sits in front of this server, so trusting
+        // X-Forwarded-For would let any client spoof its logged IP
+        app.set('trust proxy', false);
         // Middleware to log requests by IP and path
         app.use(async (req, res, next) => {
             return await _middleware(req, res, next, CONST.PORT);

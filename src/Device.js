@@ -56,6 +56,71 @@ const LINEUP_DATA = {};
 const GUIDE_FILE = path.join(CONST.DIR_NAME, "guide.xml");
 
 /**
+ * Source path to the per-install creds encryption key.
+ *
+ * Created alongside creds.bin on new installs. Older installs without
+ * this file fall back to the legacy built-in key.
+ */
+const KEY_FILE = path.join(CONST.DIR_NAME, "creds.key");
+
+/**
+ * Shared keep-alive agent so repeated cloud requests (guide caching)
+ * reuse TCP/TLS connections instead of handshaking per request.
+ */
+const KEEP_ALIVE_AGENT = new https.Agent({ keepAlive: true, maxSockets: 8 });
+
+/**
+ * Copies an object with sensitive token fields masked, for safe debug logging.
+ *
+ * @param {any} obj
+ * @returns {any}
+ */
+function redactForLog(obj) {
+    if (obj == null || typeof obj != "object") {
+        return obj;
+    }
+
+    const SENSITIVE = ["authorization", "lighthouse", "access_token", "refresh_token", "token"];
+
+    /**
+     * @type {any}
+     */
+    const copy = Array.isArray(obj) ? [] : {};
+
+    for (const key in obj) {
+        const value = obj[key];
+
+        if (SENSITIVE.includes(key.toLowerCase()) && typeof value == "string") {
+            copy[key] = value.slice(0, 6) + "...[redacted]";
+        } else {
+            copy[key] = value;
+        }
+    }
+
+    return copy;
+};
+
+/**
+ * Runs async tasks with a fixed concurrency limit.
+ *
+ * @param {(() => Promise<void>)[]} tasks
+ * @param {number} limit
+ */
+async function runWithConcurrency(tasks, limit) {
+    var index = 0;
+
+    const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+        while (index < tasks.length) {
+            const task = tasks[index++];
+
+            await task();
+        }
+    });
+
+    await Promise.all(workers);
+};
+
+/**
  * Amount of streams allowed
  */
 var TUNER_COUNT = 2;
@@ -159,91 +224,152 @@ var CURRENT_STREAMS = 0;
  * @param {{GuideNumber:string, GuideName:string, URL:string, type:string, srcURL:string, streamUrl: string}}  selectedChannel
  */
 async function handleStreams(req, res, ip, channelId, selectedChannel){
-    if (CURRENT_STREAMS < TUNER_COUNT) {
+    if (CURRENT_STREAMS >= TUNER_COUNT) {
+        Logger.error(`Client ${ip && ip.replace(/::ffff:/, "")} connected to ${channelId}, but max streams are running.`);
+
+        res.status(500).send('Failed to start stream');
+
+        return;
+    }
+
+    // Only OTA channels consume a physical tuner. Reserve the slot before any
+    // awaits so concurrent requests can't both pass the check and oversubscribe.
+    const usesTuner = selectedChannel.type == "ota";
+
+    if (usesTuner) {
+        CURRENT_STREAMS += 1;
+    }
+
+    var released = false;
+
+    const releaseSlot = () => {
+        if (!released) {
+            released = true;
+
+            if (usesTuner) {
+                CURRENT_STREAMS -= 1;
+            }
+        }
+    };
+
+    try {
         const channelReq = await reqTabloDevice("POST", CREDS_DATA.device.url, `/guide/channels/${channelId}/watch`, CREDS_DATA.UUID, "lh");
 
-        try {
-            /**
-             * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}}}
-             */
-            const channelJSON = JSON.parse(channelReq.toString());
-            // check if there is a playlist_url
-            if (channelJSON.playlist_url == undefined) {
-                Logger.error('playlist_url missing from requested channel:');
+        /**
+         * @type {{token: string, expires: string, keepalive: number, playlist_url: string, video_details: {container_format: string, flags: any[]}}}
+         */
+        const channelJSON = JSON.parse(channelReq.toString());
+        // check if there is a playlist_url
+        if (channelJSON.playlist_url == undefined) {
+            Logger.error('playlist_url missing from requested channel:');
 
-                Logger.error(channelJSON);
+            Logger.error(redactForLog(channelJSON));
 
-                Logger.error(selectedChannel);
+            Logger.error(selectedChannel);
 
-                res.status(500).send('Failed to find playlist url.');
+            releaseSlot();
 
-                return;
-            }
-
-            Logger.debug("Tablo Response:");
-
-            Logger.debug(channelJSON);
-
-            const ffmpeg = spawn('ffmpeg', [
-                '-i', channelJSON.playlist_url,
-                '-c', 'copy',
-                '-f', 'mpegts',
-                '-v', `repeat+level+${CONST.FFMPEG_LOG_LEVEL}`,
-                'pipe:1'
-            ]);
-
-            if (selectedChannel.type == "ota") {
-                CURRENT_STREAMS += 1;
-
-                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip.replace(/::ffff:/, "")} connected to ${channelId}, spawning ffmpeg stream.`);
-            } else {
-                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip.replace(/::ffff:/, "")} connected to ${channelId} (IPTV), spawning ffmpeg stream.`);
-            }
-
-            res.setHeader('Content-Type', 'video/mp2t');
-
-            ffmpeg.stdout.pipe(res);
-
-            ffmpeg.stderr.on('data', (data) => {
-                switch (CONST.FFMPEG_LOG_LEVEL) {
-                    case "info":
-                        Logger.info(`[ffmpeg] ${data}`);
-                        break;
-                    case "debug":
-                        Logger.debug(`[ffmpeg] ${data}`);
-                        break;
-                    case "warning":
-                        Logger.warn(`[ffmpeg] ${data}`);
-                        break;
-                    default:
-                        Logger.error(`[ffmpeg] ${data}`);
-                        break;
-                }
-            });
-
-            req.on('close', () => {
-                if (selectedChannel.type == "ota") {
-                    CURRENT_STREAMS -= 1;
-
-                    Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId}, killing ffmpeg`);
-                } else {
-                    Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId} (IPTV), killing ffmpeg`);
-                }
-
-                ffmpeg.kill('SIGINT');
-            });
-
-            return;
-        } catch (error) {
-            // @ts-ignore
-            Logger.error('Error starting stream:', error.message);
-
-            res.status(500).send('Failed to start stream');
+            res.status(500).send('Failed to find playlist url.');
 
             return;
         }
-    } else {
-        Logger.error(`Client ${ip && ip.replace(/::ffff:/, "")} connected to ${channelId}, but max streams are running.`);
+
+        Logger.debug("Tablo Response:");
+
+        Logger.debug(redactForLog(channelJSON));
+
+        // The stream is copied, not transcoded, so keep ffmpeg's input probing
+        // small — the defaults buffer ~5s/5MB of HLS before the first output
+        // byte reaches the client.
+        const ffmpeg = spawn('ffmpeg', [
+            '-fflags', '+nobuffer+genpts',
+            '-analyzeduration', '1000000',
+            '-probesize', '1000000',
+            '-http_persistent', '1',
+            '-i', channelJSON.playlist_url,
+            '-c', 'copy',
+            '-f', 'mpegts',
+            '-v', `repeat+level+${CONST.FFMPEG_LOG_LEVEL}`,
+            'pipe:1'
+        ]);
+
+        // The client is gone (or ffmpeg is dead), so a graceful shutdown buys
+        // nothing — SIGKILL frees the Tablo tuner session immediately.
+        const cleanup = () => {
+            releaseSlot();
+
+            ffmpeg.kill('SIGKILL');
+        };
+
+        if (usesTuner) {
+            Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip.replace(/::ffff:/, "")} connected to ${channelId}, spawning ffmpeg stream.`);
+        } else {
+            Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip.replace(/::ffff:/, "")} connected to ${channelId} (IPTV), spawning ffmpeg stream.`);
+        }
+
+        res.setHeader('Content-Type', 'video/mp2t');
+
+        res.flushHeaders();
+
+        ffmpeg.stdout.pipe(res);
+
+        ffmpeg.stderr.on('data', (data) => {
+            switch (CONST.FFMPEG_LOG_LEVEL) {
+                case "info":
+                    Logger.info(`[ffmpeg] ${data}`);
+                    break;
+                case "debug":
+                    Logger.debug(`[ffmpeg] ${data}`);
+                    break;
+                case "warning":
+                    Logger.warn(`[ffmpeg] ${data}`);
+                    break;
+                default:
+                    Logger.error(`[ffmpeg] ${data}`);
+                    break;
+            }
+        });
+
+        ffmpeg.on('error', (error) => {
+            Logger.error('ffmpeg failed to start:', error.message);
+
+            cleanup();
+
+            if (!res.headersSent) {
+                res.status(500).send('Failed to start stream');
+            } else {
+                res.end();
+            }
+        });
+
+        ffmpeg.on('close', () => {
+            if (!res.writableEnded) {
+                res.end();
+            }
+        });
+
+        req.on('close', () => {
+            cleanup();
+
+            if (usesTuner) {
+                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId}, killing ffmpeg`);
+            } else {
+                Logger.info(`${C_HEX.red_yellow}[${CURRENT_STREAMS}/${TUNER_COUNT}]${C_HEX.reset} Client ${ip && ip.replace(/::ffff:/, "")} disconnected from ${channelId} (IPTV), killing ffmpeg`);
+            }
+        });
+
+        // req 'close' does not always fire when the response side ends first,
+        // so also release on the response closing.
+        res.on('close', () => {
+            cleanup();
+        });
+
+        return;
+    } catch (error) {
+        // @ts-ignore
+        Logger.error('Error starting stream:', error.message);
+
+        releaseSlot();
 
         res.status(500).send('Failed to start stream');
 
@@ -353,7 +479,7 @@ async function makeTabloRequest(method, host, path, msg = "", headers = {}, para
 
     Logger.debug("Tablo Request:");
 
-    Logger.debug(headers);
+    Logger.debug(redactForLog(headers));
 
     Logger.debug(msg);
 
@@ -465,22 +591,25 @@ async function _channel(req, res) {
  * @param {Response} res 
  */
 async function _guide_serve(req, res) {
-    try {
-        const data = FS.readFile(GUIDE_FILE);
+    // Stream the file — guide.xml can be several MB and a sync read here
+    // stalls every active ffmpeg pipe on the event loop.
+    const stream = fs.createReadStream(GUIDE_FILE);
 
-        const headers = {
-            "content-type": "application/xml"
+    stream.on('error', () => {
+        if (!res.headersSent) {
+            res.status(404).send('Guide not found');
+        } else {
+            res.end();
         }
+    });
 
-        res.writeHead(200, headers);
+    stream.once('open', () => {
+        res.setHeader("content-type", "application/xml");
+    });
 
-        res.end(data);
+    stream.pipe(res);
 
-        return;
-    } catch (error) {
-        res.status(404).send('Guide not found');
-        return;
-    }
+    return;
 };
 
 /**
@@ -510,7 +639,8 @@ async function makeHTTPSRequest(method, hostname, path, headers, data = "", just
             port: 443,
             path: path,
             method: method,
-            headers: headers
+            headers: headers,
+            agent: KEEP_ALIVE_AGENT
         };
         // Create the request
         const req = https.request(options, (res) => {
@@ -608,7 +738,7 @@ async function reqCreds() {
             if (loginCreds.code == undefined) {
                 Logger.debug("lighthousetv login");
 
-                Logger.debug(loginCreds);
+                Logger.debug(redactForLog(loginCreds));
 
                 if (loginCreds.is_verified != true) {
                     Logger.info(`${C_HEX.blue}NOTE:${C_HEX.reset} While password was accepted, account is not verified.\nPlease check email to make sure your account is fully set up. There may be issues later.`);
@@ -862,9 +992,15 @@ async function reqCreds() {
 
     Object.assign(CREDS_DATA, masterCreds);
 
-    const encryCreds = Encryption.crypt(JSON.stringify(masterCreds));
+    // New installs get a random per-install key (stored owner-only next to
+    // creds.bin) instead of the key baked into the public source.
+    const credsKey = Encryption.newKey();
 
-    FS.writeFile(encryCreds, CONST.CREDS_FILE);
+    FS.writeFile(credsKey, KEY_FILE, 0o600);
+
+    const encryCreds = Encryption.crypt(JSON.stringify(masterCreds), credsKey);
+
+    FS.writeFile(encryCreds, CONST.CREDS_FILE, 0o600);
 
     Logger.info(`Credentials successfully encrypted! Ready to use the server!`);
 
@@ -878,13 +1014,25 @@ async function readCreds() {
     if (CREDS_DATA.UUID == undefined) {
         const masterCreds = FS.readFile(CONST.CREDS_FILE);
 
-        const encryCreds = Encryption.decrypt(masterCreds);
+        // Installs made before per-install keys existed have no key file and
+        // fall back to the legacy built-in key inside Encryption.
+        var credsKey = undefined;
+
+        if (FS.fileExists(KEY_FILE)) {
+            credsKey = FS.readFile(KEY_FILE);
+        }
+
+        const encryCreds = Encryption.decrypt(masterCreds, credsKey);
 
         if (encryCreds[0] != 0x7B) {
             try {
                 Logger.error("Issue decrypting creds file. Removing creds file. Please start app again or use --creds command line to create a new file.");
 
                 fs.unlinkSync(CONST.CREDS_FILE);
+
+                if (FS.fileExists(KEY_FILE)) {
+                    fs.unlinkSync(KEY_FILE);
+                }
 
                 return await exit();
             } catch (error) {
@@ -902,6 +1050,11 @@ async function readCreds() {
                 Logger.error("Issue reading decrypted creds file, Removing creds file. Please start app again or use --creds command line to create a new file.");
 
                 fs.unlinkSync(CONST.CREDS_FILE);
+
+                if (FS.fileExists(KEY_FILE)) {
+                    fs.unlinkSync(KEY_FILE);
+                }
+
                 return await exit();
             } catch (error) {
                 Logger.error("Issue reading creds file, could not delete bad file. Your app may have read write issues. Please check your folder settings and start the app again or use --creds command line to create a new file.");
@@ -1004,7 +1157,15 @@ async function parseGuideData(lineUp) {
                 /**
                  * @type {guideInfo[]}
                  */
-                const tdData = FS.readJSON(fileTD);
+                var tdData = [];
+
+                try {
+                    // async read so live streams keep flowing while the
+                    // guide is being rebuilt
+                    tdData = JSON.parse(await fs.promises.readFile(fileTD, 'utf8'));
+                } catch (error) {
+                    Logger.error("Could not read guide data file: " + fileTD);
+                }
 
                 filesData.push(tdData);
 
@@ -1223,6 +1384,11 @@ async function cacheGuideData() {
 
     Logger.info(`Prepping ${totalFiles} needed guide files.`);
 
+    /**
+     * @type {(() => Promise<void>)[]}
+     */
+    const tasks = [];
+
     for (let i = 0; i < lineup.length; i++) {
         const el = lineup[i];
 
@@ -1237,69 +1403,59 @@ async function cacheGuideData() {
 
             const reqPathTD = path1 + el.identifier + "/airings/" + guideDay + "/";
 
-            const headers = {
-                'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
-                'Accept': '*/*',
-                "Authorization": CREDS_DATA.lighthousetvAuthorization,
-                'Lighthouse': CREDS_DATA.Lighthouse
-            };
+            tasks.push(async () => {
+                // fresh headers per request — makeHTTPSRequest mutates them
+                const headers = {
+                    'User-Agent': 'Tablo-FAST/2.0.0 (Mobile; iPhone; iOS 16.6)',
+                    'Accept': '*/*',
+                    "Authorization": CREDS_DATA.lighthousetvAuthorization,
+                    'Lighthouse': CREDS_DATA.Lighthouse
+                };
 
-            if (!FS.fileExists(file)) {
-                // new file
                 try {
-                    const dataIn1 = await makeHTTPSRequest("GET", host, reqPathTD, headers);
-
-                    if (dataIn1) {
-                        FS.loadingBar(totalFiles, ++currentFile);
-
-                        FS.writeJSON(dataIn1, file);
-                    } else {
-                        currentFile++;
-
-                        Logger.error(`Could not write ${fileName}`);
-
-                        Logger.error(dataIn1);
-                    }
-                } catch (error) {
-                    currentFile++;
-
-                    FS.writeJSON("[]", file);
-
-                    Logger.error("On new makeHTTPSRequest creating JSON:");
-                    
-                    Logger.error(error);
-                }
-            } else {
-                // check file size
-                try {
-                    const head = await makeHTTPSRequest("HEAD", host, reqPathTD, headers, "", true);
-
-                    const sizeIn = parseInt(head['content-length']);
-
-                    const stats = await fs.promises.stat(file);
-
-                    if(stats.size != sizeIn){
-                        // if they don't match, there is new data, get the file
+                    if (!FS.fileExists(file)) {
+                        // new file
                         const dataIn1 = await makeHTTPSRequest("GET", host, reqPathTD, headers);
 
-                        FS.writeJSON(dataIn1, file);
-                        
-                        FS.loadingBar(totalFiles, ++currentFile);
+                        if (dataIn1) {
+                            await fs.promises.writeFile(file, dataIn1);
+                        } else {
+                            Logger.error(`Could not write ${fileName}`);
+                        }
                     } else {
-                        FS.loadingBar(totalFiles, ++currentFile);
+                        // check file size
+                        const head = await makeHTTPSRequest("HEAD", host, reqPathTD, headers, "", true);
+
+                        const sizeIn = parseInt(head['content-length']);
+
+                        const stats = await fs.promises.stat(file);
+
+                        if (stats.size != sizeIn) {
+                            // if they don't match, there is new data, get the file
+                            const dataIn1 = await makeHTTPSRequest("GET", host, reqPathTD, headers);
+
+                            await fs.promises.writeFile(file, dataIn1);
+                        }
                     }
                 } catch (error) {
-                    currentFile++;
-
-                    FS.writeJSON("[]", file);
+                    try {
+                        await fs.promises.writeFile(file, "[]");
+                    } catch { /* leave a missing file to be retried next run */ }
 
                     Logger.error("On makeHTTPSRequest creating JSON:");
 
                     Logger.error(error);
+                } finally {
+                    FS.loadingBar(totalFiles, ++currentFile);
                 }
-            }
+            });
         }
     }
+
+    // A few requests in flight at a time — with the keep-alive agent this
+    // turns hundreds of serial TLS handshakes into a handful of reused
+    // connections without hammering the API.
+    await runWithConcurrency(tasks, 6);
 
     process.stdout.write('\n');
     // clear spam
@@ -1321,7 +1477,7 @@ async function cacheGuideData() {
 
     const xmlData = await parseGuideData(lineup);
 
-    FS.writeFile(xmlData, GUIDE_FILE);
+    await fs.promises.writeFile(GUIDE_FILE, xmlData);
 
     return;
 };
@@ -1338,6 +1494,12 @@ async function parseLineup(lineup = undefined) {
     var lineupParse = lineup ?? FS.readJSON(LINEUP_FILE);
 
     try {
+        // rebuild from scratch so channels removed from the Tablo lineup
+        // don't keep serving stale entries until restart
+        for (const key of Object.keys(LINEUP_DATA)) {
+            delete LINEUP_DATA[key];
+        }
+
         for (let i = 0; i < lineupParse.length; i++) {
             const el = lineupParse[i];
 

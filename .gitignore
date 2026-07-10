@@ -6,6 +6,7 @@ logs/*
 # personal files
 package-lock.json
 creds.bin
+creds.key
 schedule_lineup.json
 lineup.json
 ffmpeg.exe

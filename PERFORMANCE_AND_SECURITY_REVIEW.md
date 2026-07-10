@@ -6,6 +6,48 @@ codebase. File and line references are against the current source.
 
 ---
 
+## Implementation status
+
+The following fixes from this review are implemented on this branch:
+
+**Performance**
+- §1.1 ffmpeg probe limits (`-fflags +nobuffer+genpts`, 1s/1MB probe,
+  `-http_persistent 1`) — `src/Device.js`
+- §1.2 Tuner slot reserved before the `/watch` await (race fixed), SIGKILL on
+  disconnect, `res.flushHeaders()`, `ffmpeg.on('error')`/`on('close')`
+  handlers — `src/Device.js`
+- §1.3 `guide.xml` served via stream instead of a sync read; guide build uses
+  async file I/O; Logger reuses one append stream instead of opening one per
+  message — `src/Device.js`, `src/Logger.js`
+- §1.4 Shared keep-alive `https.Agent` + guide downloads run 6-at-a-time
+  instead of serially — `src/Device.js`
+- §1.5 `parseLineup` clears stale channels before rebuilding — `src/Device.js`
+
+**Security**
+- §2.1 New installs generate a random 32-byte key (`creds.key`, mode `0600`)
+  for `creds.bin` (also `0600`). Existing installs keep decrypting via the
+  legacy built-in key — no migration needed, but re-running `--creds` upgrades
+  an install to the per-install key. **If you move an install to another
+  machine, copy `creds.key` along with `creds.bin`.** Bonus fix found while
+  testing: a wrong-key/corrupted `creds.bin` used to crash the process with an
+  unhandled cipher stream error; it is now handled as a bad creds file.
+- §2.2 `.dockerignore` now excludes `.env`, `creds.bin`, `creds.key`, `logs`,
+  and all runtime state; `creds.key` added to `.gitignore`
+- §2.3 `Authorization`/`Lighthouse`/token fields are redacted in debug logs;
+  log files are created with mode `0600`
+- §2.4 Wildcard CORS headers removed
+- §2.5 `trust proxy` set to `false`
+- §2.6 Crypto seed and UUID now come from `crypto.randomBytes` /
+  `crypto.randomUUID` instead of a clock-seeded Mersenne Twister
+- §2.7 `keypress` git dependency pinned to a commit hash
+
+Not implemented (needs a maintainer decision or hardware testing): the Tablo
+`keepalive` POST (§1.5), running the guide build in a worker thread (§1.3),
+committing `package-lock.json` (§2.7), and a non-root `USER` in the
+Dockerfile (§2.2).
+
+---
+
 ## Part 1: Performance
 
 The architecture is sound — the channel lineup is held in memory

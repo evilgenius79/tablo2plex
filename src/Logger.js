@@ -19,6 +19,10 @@ class _CustomLog {
     logType = "info";
     logLevel = 0;
     /**
+     * @type {fs.WriteStream|null}
+     */
+    stream = null;
+    /**
      * @param {boolean} saveLog
      * @param {string} dirName
      * @param {string} logType
@@ -37,6 +41,23 @@ class _CustomLog {
             }
 
             this.loc = path.join(dirName, `/logs/${JSDate.currentTime()}-${logType}.log`);
+
+            try {
+                // one shared append stream — opening a new one per log call
+                // churns file handles constantly while ffmpeg is streaming.
+                // owner-only since logs can contain sensitive info.
+                this.stream = fs.createWriteStream(this.loc, { flags: 'a', mode: 0o600 });
+
+                this.stream.on('error', (error) => {
+                    console.error("Error writing to log file");
+
+                    console.error(error);
+                });
+            } catch (error) {
+                console.error("Error creating log file");
+
+                console.error(error);
+            }
         }
     }
 
@@ -59,18 +80,11 @@ class _CustomLog {
             message = message.message;
         }
 
-        if (this.saveLog) {
+        if (this.saveLog && this.stream) {
             try {
-                const writeStream = fs.createWriteStream(this.loc, { flags: 'a' });
-
                 const regexRemove = /\x1b\[[0-9;]*[mG]/g;
                 // Write the text to the file
-                writeStream.write(level.replace(regexRemove, '') + " " + message.replace(regexRemove, '') + '\n');
-                // Listen for the 'finish' event to know when the write operation is complete
-                writeStream.on('finish', () => {
-                    // Close the write stream
-                    writeStream.end();
-                });
+                this.stream.write(level.replace(regexRemove, '') + " " + message.replace(regexRemove, '') + '\n');
             } catch (error) {
                 console.error("Error writing to log file");
 

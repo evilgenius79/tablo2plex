@@ -8,3 +8,13 @@ Dockerfile
 imgs
 node_modules
 README.md
+# never bake secrets or runtime state into the image
+.env
+creds.bin
+creds.key
+logs
+lineup.json
+guide.xml
+schedule_lineup.json
+schedule_guide.json
+tempGuide
