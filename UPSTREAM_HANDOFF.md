@@ -25,21 +25,31 @@ endpoint returned, instead of a `playlist_url`:
 
 so `handleStreams` had no playlist and the stream never started.
 
-### Actual cause (confirmed)
+### Cause: a misconfigured local `.env` (resolved by correcting it)
 
-A **misconfigured local `.env`** — the device-signing keys were present but
-**empty** (`HashKey=""` / `DeviceKey=""`). `makeDeviceAuth` reads
+Correcting the local `.env` restored streaming (the device then returned a
+valid `playlist_url` and the tuner connected). The exact bad value in the
+original `.env` was **not** captured byte-for-byte, so treat the specific
+mechanism below as the most likely explanation rather than a confirmed one.
+
+Most likely: the device-signing keys were present but **empty**
+(`HashKey=""` / `DeviceKey=""`). The original `makeDeviceAuth` read
 `process.env.HashKey == undefined ? <default> : process.env.HashKey`, and an
-empty string is **not** `undefined`, so it signed every device request with an
-empty key → the device rejected it as "Authentication failure." Correcting the
-`.env` restored streaming (the device then returned a valid `playlist_url` and
-the tuner connected).
+empty string is **not** `undefined`, so it would sign every device request
+with an empty key → the device rejects it as "Authentication failure." Any
+`.env` that supplies a wrong/blank signing key produces the same result.
 
 This fingerprint is worth remembering because it looks alarming: cloud calls
 (login, account, guide/lineup) keep working because those use the account
 **bearer token**, not the HMAC — so only the device `/watch` fails, and it
 survives fresh credentials and a device reboot. It is easy to misread as a
-Tablo-side key rotation. It is not.
+Tablo-side key rotation; in this case it was local config.
+
+(Note: this was a **separate** issue from the "couldn't finish adding the
+tuner in Plex" problem, which was simply `CREATE_XML=false` → no `guide.xml`
+for Plex to load. `DEVICE_ID` was never involved in either — the default is
+always set, and the auto-generate fallback only triggers when it is unset or
+invalid.)
 
 ### Hardening applied
 
