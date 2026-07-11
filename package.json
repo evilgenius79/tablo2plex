@@ -1,6 +1,6 @@
 {
     "name": "tablo2plex",
-    "version": "1.0.12-eg5",
+    "version": "1.0.12-eg6",
     "description": "Tablo 4th Gen proxy to Plex server translation",
     "type": "commonjs",
     "main": "app.js",

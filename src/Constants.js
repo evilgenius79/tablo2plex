@@ -88,6 +88,11 @@ const DEFAULT_ENV_VALUES = [
         desc: "; Include OTT (Over-The-Top) channels in the line up (default \"true\")",
         key: 'INCLUDE_OTT',
         value: 'true'
+    },
+    {
+        desc: "; Seconds to keep a tuner \"warm\" after you stop watching a channel, so\n; switching back to it is instant instead of waiting ~5-6s for the Tablo to\n; spin the tuner up again. NOTE: a warm tuner still occupies one of your\n; physical tuners for this long; it is auto-reclaimed if all tuners are needed\n; for new streams. 0 disables it (default). Try \"60\" for snappy channel surfing.",
+        key: 'WARM_TUNER_SECONDS',
+        value: '0'
     }
 ];
 
