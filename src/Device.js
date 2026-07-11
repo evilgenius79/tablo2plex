@@ -6,7 +6,9 @@
 
 const https = require('https');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const XMLWriter = require('xml-writer');
 const { spawn } = require('child_process');
 
@@ -606,8 +608,9 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
 
         // The stream is copied, not transcoded, so keep ffmpeg's input probing
         // small — the defaults buffer ~5s/5MB of HLS before the first output
-        // byte reaches the client. muxdelay/muxpreload drop the mpegts muxer's
-        // default 0.7s of output buffering.
+        // byte reaches the client. (muxdelay/muxpreload 0 were tried here but
+        // starved the player's PCR/PTS lead and caused endless buffering, so
+        // the mpegts muxer keeps its default output timing.)
         const ffmpeg = spawn('ffmpeg', [
             '-fflags', '+nobuffer+genpts',
             '-analyzeduration', '1000000',
@@ -616,8 +619,6 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
             '-i', playlistUrl,
             '-c', 'copy',
             '-f', 'mpegts',
-            '-muxdelay', '0',
-            '-muxpreload', '0',
             '-v', `repeat+level+${CONST.FFMPEG_LOG_LEVEL}`,
             'pipe:1'
         ]);
@@ -739,6 +740,48 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
 /**
  * Start up message
  */
+/**
+ * Cached effective device ID.
+ * @type {string|null}
+ */
+var _EFFECTIVE_DEVICE_ID = null;
+
+/**
+ * Returns the HDHomeRun device ID advertised to Plex. Uses DEVICE_ID when it's
+ * a valid 8-hex value; otherwise derives a stable, machine-unique one (so Plex
+ * keeps recognizing the same tuner across restarts) and warns. Computed lazily
+ * and cached so the notice logs once.
+ *
+ * @returns {string}
+ */
+function getEffectiveDeviceId() {
+    if (_EFFECTIVE_DEVICE_ID != null) {
+        return _EFFECTIVE_DEVICE_ID;
+    }
+
+    const raw = CONST.DEVICE_ID;
+
+    if (typeof raw == "string" && /^[0-9A-Fa-f]{8}$/.test(raw)) {
+        _EFFECTIVE_DEVICE_ID = raw.toUpperCase();
+
+        return _EFFECTIVE_DEVICE_ID;
+    }
+
+    // stable per-machine 8-hex id (not random-per-boot: Plex identifies the
+    // tuner by this ID, so it must persist across restarts)
+    const derived = crypto.createHash("md5").update(os.hostname() || "tablo2plex").digest("hex").slice(0, 8).toUpperCase();
+
+    if (raw != null && `${raw}`.trim() != "") {
+        Logger.warn(`DEVICE_ID "${raw}" is not a valid 8-character hex ID; using generated ID ${C_HEX.green}${derived}${C_HEX.reset} instead. Set DEVICE_ID to a unique 8-hex value (0-9, A-F) to override — each HDHomeRun-style tuner Plex sees needs a distinct ID.`);
+    } else {
+        Logger.info(`No DEVICE_ID set; generated stable device ID ${C_HEX.green}${derived}${C_HEX.reset} from this machine.`);
+    }
+
+    _EFFECTIVE_DEVICE_ID = derived;
+
+    return _EFFECTIVE_DEVICE_ID;
+};
+
 function startUpMessage(){
     Logger.info(`Server v${CONST.VERSION} is running on ${C_HEX.blue}${CONST.SERVER_URL}${C_HEX.reset} with ${TUNER_COUNT} tuners`);
 
@@ -750,7 +793,7 @@ function startUpMessage(){
 
     Logger.info(`  Name:                 ${CONST.NAME}`);
 
-    Logger.info(`  Device ID:            ${CONST.DEVICE_ID}`);
+    Logger.info(`  Device ID:            ${getEffectiveDeviceId()}`);
 
     Logger.info(`  Port:                 ${CONST.PORT}`);
 
@@ -804,7 +847,7 @@ function makeDiscover(){
         ModelNumber: "HDHR3-US",
         FirmwareName: "hdhomerun3_atsc",
         FirmwareVersion: "20240101",
-        DeviceID: CONST.DEVICE_ID, // "12345678",
+        DeviceID: getEffectiveDeviceId(), // valid 8-hex or a stable generated one
         DeviceAuth: "tabloauth123",
         BaseURL: CONST.SERVER_URL,// SERVER_URL,
         LocalIP: CONST.SERVER_URL,// SERVER_URL,
