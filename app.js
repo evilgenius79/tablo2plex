@@ -42,9 +42,9 @@ var GUIDE_SCHEDULER;
             // creds need setting up
             Logger.info(`No creds file found. Lets log into your Tablo account.`);
 
-            Logger.info(`${C_HEX.red}NOTE:${C_HEX.reset} Your password and email are never stored, but are transmitted in plain text.`);
+            Logger.info(`${C_HEX.green}NOTE:${C_HEX.reset} Your email and password are sent securely over HTTPS to Tablo's login server and are never stored on disk (only the resulting encrypted tokens are).`);
 
-            Logger.info(`Please make sure you are on a trusted network before you continue.`);
+            Logger.info(`This only happens during first-time login; afterward the encrypted creds file is used.`);
 
             await reqCreds();
         }
@@ -66,9 +66,9 @@ var GUIDE_SCHEDULER;
         // creds need setting up
         Logger.info(`${C_HEX.yellow}Running forced one-time credentials creation...${C_HEX.reset}`);
 
-        Logger.info(`${C_HEX.red}NOTE:${C_HEX.reset} Your password and email are never stored, but are transmitted in plain text.`);
+        Logger.info(`${C_HEX.green}NOTE:${C_HEX.reset} Your email and password are sent securely over HTTPS to Tablo's login server and are never stored on disk (only the resulting encrypted tokens are).`);
         
-        Logger.info(`Please make sure you are on a trusted network before you continue.`);
+        Logger.info(`This only happens during first-time login; afterward the encrypted creds file is used.`);
 
         LINEUP_SCHEDULER = new Scheduler(CONST.SCHEDULE_LINEUP, "Update channel lineup", CONST.LINEUP_UPDATE_INTERVAL, makeLineup);
 
@@ -83,9 +83,9 @@ var GUIDE_SCHEDULER;
             // creds need setting up
             Logger.info(`No creds file found. Lets log into your Tablo account.`);
 
-            Logger.info(`${C_HEX.red}NOTE:${C_HEX.reset} Your password and email are never stored, but are transmitted in plain text.`);
+            Logger.info(`${C_HEX.green}NOTE:${C_HEX.reset} Your email and password are sent securely over HTTPS to Tablo's login server and are never stored on disk (only the resulting encrypted tokens are).`);
             
-            Logger.info(`Please make sure you are on a trusted network before you continue.`);
+            Logger.info(`This only happens during first-time login; afterward the encrypted creds file is used.`);
 
             await reqCreds();
         }
