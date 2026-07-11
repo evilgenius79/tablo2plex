@@ -741,12 +741,49 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
  */
 function startUpMessage(){
     Logger.info(`Server v${CONST.VERSION} is running on ${C_HEX.blue}${CONST.SERVER_URL}${C_HEX.reset} with ${TUNER_COUNT} tuners`);
+
+    // Show the effective settings at boot so misconfigurations (e.g. the XML
+    // guide being off) are obvious without digging through the .env file.
+    const on = (/** @type {boolean} */ v) => v ? `${C_HEX.green}true${C_HEX.reset}` : `${C_HEX.red}false${C_HEX.reset}`;
+
+    Logger.info(`${C_HEX.yellow}---- Current settings ----${C_HEX.reset}`);
+
+    Logger.info(`  Name:                 ${CONST.NAME}`);
+
+    Logger.info(`  Device ID:            ${CONST.DEVICE_ID}`);
+
+    Logger.info(`  Port:                 ${CONST.PORT}`);
+
+    Logger.info(`  Create XML guide:     ${on(CONST.CREATE_XML)}`);
+
+    Logger.info(`  Guide days:           ${CONST.GUIDE_DAYS}`);
+
+    Logger.info(`  Include OTT channels: ${on(CONST.INCLUDE_OTT)}`);
+
+    Logger.info(`  Include PseudoTV EPG: ${on(CONST.INCLUDE_PSEUDOTV_GUIDE)}`);
+
+    Logger.info(`  Lineup update (days): ${(CONST.LINEUP_UPDATE_INTERVAL / 86400000).toFixed(0)}`);
+
+    Logger.info(`  Guide update (hours): ${(CONST.GUIDE_UPDATE_INTERVAL / 3600000).toFixed(0)}`);
+
+    Logger.info(`  Warm tuner (seconds): ${WARM_TUNER_SECONDS}`);
+
+    Logger.info(`  Log level:            ${CONST.LOG_TYPE}`);
+
+    Logger.info(`  Save log:             ${on(CONST.SAVE_LOG)}`);
+
+    Logger.info(`  Auto re-login:        ${on(CONST.USER_NAME != null && CONST.USER_PASS != null)}`);
+
+    Logger.info(`${C_HEX.yellow}--------------------------${C_HEX.reset}`);
+
     if (CONST.CREATE_XML) {
         Logger.info(`Guide data can be found at ${C_HEX.blue}${CONST.SERVER_URL}/guide.xml${C_HEX.reset}`);
 
         const guideLoc = path.join(CONST.DIR_NAME, "guide.xml");
 
         Logger.info(`or ${C_HEX.blue}${guideLoc}${C_HEX.reset}`);
+    } else {
+        Logger.info(`${C_HEX.yellow}XML guide is disabled${C_HEX.reset} (CREATE_XML = false). Plex requests to ${C_HEX.blue}/guide.xml${C_HEX.reset} will be refused. Set ${C_HEX.green}CREATE_XML=true${C_HEX.reset} to enable it, or use Plex's built-in guide.`);
     }
     if (CONST.LOG_TYPE == "debug") {
         Logger.debug("Debug mode is active!");
@@ -950,13 +987,25 @@ async function _channel(req, res) {
  * @param {Response} res 
  */
 async function _guide_serve(req, res) {
+    // Explain the common misconfiguration instead of a bare 404 when the XML
+    // guide isn't turned on.
+    if (!CONST.CREATE_XML) {
+        Logger.warn(`Guide requested but the XML guide is disabled. Set ${C_HEX.green}CREATE_XML=true${C_HEX.reset} in your .env (or --xml true) and restart to enable ${CONST.SERVER_URL}/guide.xml, or use Plex's built-in guide instead.`);
+
+        res.status(503).send('XML guide is not enabled. Set CREATE_XML=true and restart, or use Plex\'s built-in guide.');
+
+        return;
+    }
+
     // Stream the file — guide.xml can be several MB and a sync read here
     // stalls every active ffmpeg pipe on the event loop.
     const stream = fs.createReadStream(GUIDE_FILE);
 
     stream.on('error', () => {
+        Logger.warn(`Guide requested but ${GUIDE_FILE} does not exist yet. It builds on the guide-update schedule (or press 'l'); wait for it to finish, then retry.`);
+
         if (!res.headersSent) {
-            res.status(404).send('Guide not found');
+            res.status(404).send('Guide not built yet. Wait for the guide update to finish and retry.');
         } else {
             res.end();
         }

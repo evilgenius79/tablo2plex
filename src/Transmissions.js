@@ -130,11 +130,11 @@ async function runServer() {
             return await _channel(req, res);
         })
 
-        if (CONST.CREATE_XML) {
-            app.get("/guide.xml", async (req, res) => {
-                return await _guide_serve(req, res);
-            })
-        }
+        // Always registered so a request when CREATE_XML is off returns a
+        // helpful explanation instead of a bare 404.
+        app.get("/guide.xml", async (req, res) => {
+            return await _guide_serve(req, res);
+        })
 
         app.get("/favicon.ico", async (req, res) => {
             res.end("");
