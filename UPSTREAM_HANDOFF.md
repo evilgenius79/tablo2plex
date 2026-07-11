@@ -1,8 +1,9 @@
 # Tablo2Plex — Handoff Notes
 
-This document summarizes the work done in this fork and the root-cause
-analysis of the current device-authentication break, so it can be folded into
-the upstream project. Companion docs:
+This document summarizes the work done in this fork, plus a resolved
+device-authentication issue that turned out to be a local misconfiguration
+(not a Tablo-side change), so it can be folded into the upstream project.
+Companion docs:
 
 - [`PERFORMANCE_AND_SECURITY_REVIEW.md`](./PERFORMANCE_AND_SECURITY_REVIEW.md)
   — full performance + security review with reasoning.
@@ -11,42 +12,50 @@ the upstream project. Companion docs:
 
 ---
 
-## 1. Root cause: device "Authentication failure" (current outage)
+## 1. Resolved: device "Authentication failure" was a bad `.env`
 
 ### Symptom
 
-Streaming a channel fails. The Tablo device's `/guide/channels/<id>/watch`
-endpoint returns, instead of a `playlist_url`:
+Streaming a channel failed. The Tablo device's `/guide/channels/<id>/watch`
+endpoint returned, instead of a `playlist_url`:
 
 ```json
 { "error": { "code": "unauthorized", "details": null, "description": "Authentication failure" } }
 ```
 
-so `handleStreams` has no playlist and the stream never starts.
+so `handleStreams` had no playlist and the stream never started.
 
-### Evidence gathered
+### Actual cause (confirmed)
 
-| Test | Result | Rules out |
-|------|--------|-----------|
-| Fresh credentials (new login, new UUID) | still fails | token expiry |
-| Cloud calls (login, account, guide/lineup) | **work** | account/cloud credentials |
-| Only the device `/watch` HMAC is rejected | fails | anything above the device layer |
-| Original **upstream** files (unmodified) | **same failure** | any change made in this fork |
-| Tablo device power-cycle | no change | stuck device/session state |
-| PC clock verified / re-synced | no change | signature timestamp skew |
+A **misconfigured local `.env`** — the device-signing keys were present but
+**empty** (`HashKey=""` / `DeviceKey=""`). `makeDeviceAuth` reads
+`process.env.HashKey == undefined ? <default> : process.env.HashKey`, and an
+empty string is **not** `undefined`, so it signed every device request with an
+empty key → the device rejected it as "Authentication failure." Correcting the
+`.env` restored streaming (the device then returned a valid `playlist_url` and
+the tuner connected).
 
-### Conclusion
+This fingerprint is worth remembering because it looks alarming: cloud calls
+(login, account, guide/lineup) keep working because those use the account
+**bearer token**, not the HMAC — so only the device `/watch` fails, and it
+survives fresh credentials and a device reboot. It is easy to misread as a
+Tablo-side key rotation. It is not.
 
-The rejection is at the **device-level HMAC signature**, it reproduces on
-unmodified upstream code, and every environmental cause has been eliminated.
-That points to a **Tablo-side change to the device signing** — most likely a
-rotation of the shared keys or a change to the signing scheme, pushed via a
-device firmware update. If so, it breaks **all** tablo2plex users
-simultaneously, not just this one.
+### Hardening applied
 
-### Where the signing lives
+To make this failure self-explanatory instead of a silent bad signature:
 
-`src/Encryption.js` → `makeDeviceAuth(method, url, msg, date)` builds:
+- Startup now prints an effective-settings summary (see §"Build/UX"), so a
+  wrong/empty setting is visible at boot.
+- Empty `HashKey`/`DeviceKey`/`RSA` env values should be treated as "unset."
+  Recommended upstream tweak in `makeDeviceAuth` / `crypt`: use
+  `process.env.HashKey || <default>` (falsy check) instead of `== undefined`,
+  so an empty string falls back to the built-in key rather than signing with
+  "".
+
+### Where the signing lives (reference)
+
+`src/Encryption.js` → `makeDeviceAuth(method, url, msg, date)`:
 
 ```
 full_str = method + "\n" + url + "\n" + md5(msg) + "\n" + date
@@ -54,26 +63,19 @@ signature = HMAC-MD5(full_str, HashKey)
 Authorization = "tablo:" + DeviceKey + ":" + hex(signature)
 ```
 
-with the built-in constants (overridable via env):
+Built-in constants (overridable via env): `HashKey`, `DeviceKey`.
 
-- `HashKey` default `6l8jU5N43cEilqItmT3U2M2PFM3qPziilXqau9ys`
-- `DeviceKey` default `ljpg6ZkwShVv8aI12E2LP55Ep8vq1uYDPvX0DdTB`
+### If a real Tablo-side signing change ever does happen
 
-If Tablo rotated these (or changed `full_str`/hash), the fix is to recover the
-new values.
-
-### Recovering the new keys
+The same symptom would appear, but with a **correct** `.env`. In that case the
+new keys/scheme must be recovered from firmware:
 
 1. `node tools/device-info.js` — dumps the device's full `/server/info`
-   (firmware version) and probes endpoints. Confirms the running firmware.
-2. Capture the device's OTA update image (watch its update-check traffic:
-   `tcpdump host <device-ip>` / Wireshark), then `binwalk -e firmware.bin`.
-3. Locate the signing constants / signing routine in the extracted firmware
-   and compare against `makeDeviceAuth`. Update the keys (or the scheme) to
-   match.
-
-Until the new keys/scheme are recovered, no version of the proxy can stream —
-this is not fixable in application code alone.
+   (firmware version) and probes endpoints.
+2. Capture the device's OTA image (`tcpdump host <device-ip>` / Wireshark
+   during an update check), then `binwalk -e firmware.bin`.
+3. Locate the signing constants/routine in the firmware and update
+   `makeDeviceAuth` to match.
 
 ---
 

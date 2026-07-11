@@ -554,7 +554,9 @@ function _UUID(version = 4, options = {}, asBuffer = false) {
  * @returns {Buffer}
  */
 function _legacyKey() {
-    const RSA = process.env.RSA == undefined ? "30818902818100B507AAAC6B6B1BA5CE02B8512381159ECFD9CD32D6EEADCAFF459EA7E2210819C2D915F437E30871DDA190F19B8898038E1E7863A21699CDA5BC6C84C49D935AFAFFE1D2F16B0C662DC8941D8751FB7A36AC22F5980EDF92FCF7756FC6FCFD967A73303C7CD7030C681799C18E0A2F2D2B69C9F7BD8ADE05731BB179F354F0E90203010001" : process.env.RSA;
+    // `||` so an empty RSA="" env value falls back to the built-in key
+    // rather than deriving a bad legacy key.
+    const RSA = process.env.RSA || "30818902818100B507AAAC6B6B1BA5CE02B8512381159ECFD9CD32D6EEADCAFF459EA7E2210819C2D915F437E30871DDA190F19B8898038E1E7863A21699CDA5BC6C84C49D935AFAFFE1D2F16B0C662DC8941D8751FB7A36AC22F5980EDF92FCF7756FC6FCFD967A73303C7CD7030C681799C18E0A2F2D2B69C9F7BD8ADE05731BB179F354F0E90203010001";
 
     const buff = Buffer.from(RSA, "hex");
 
@@ -680,11 +682,15 @@ class Encryption {
         }
         const full_str = method + "\n" + url + "\n" + msg + "\n" + date;
 
-        const key = process.env.HashKey == undefined ? "6l8jU5N43cEilqItmT3U2M2PFM3qPziilXqau9ys" : process.env.HashKey;
+        // Use `||` (falsy) rather than `== undefined` so an empty env value
+        // (HashKey="") falls back to the built-in key instead of signing with
+        // "" — an empty key produces a bad signature the device rejects as
+        // "Authentication failure".
+        const key = process.env.HashKey || "6l8jU5N43cEilqItmT3U2M2PFM3qPziilXqau9ys";
 
         const part2 = createHmac("md5", key).update(full_str);
 
-        const device = process.env.DeviceKey == undefined ? "ljpg6ZkwShVv8aI12E2LP55Ep8vq1uYDPvX0DdTB" : process.env.DeviceKey;
+        const device = process.env.DeviceKey || "ljpg6ZkwShVv8aI12E2LP55Ep8vq1uYDPvX0DdTB";
 
         return "tablo:" + device + ":" + part2.digest('hex').toLowerCase();
     };
