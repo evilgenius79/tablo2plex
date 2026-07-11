@@ -22,9 +22,8 @@ original project. The full review with details and reasoning is in
   fresh `/watch` automatically.
 - **Faster ffmpeg startup** — input probing limits (`-fflags
   +nobuffer+genpts`, 1 s / 1 MB probe) cut several seconds off stream start
-  since the stream is copied, not transcoded. `-http_persistent 1` reuses one
-  connection for segment fetches, and `-muxdelay 0 -muxpreload 0` removes the
-  mpegts muxer's default 0.7 s of output buffering.
+  since the stream is copied, not transcoded, and `-http_persistent 1` reuses
+  one connection for segment fetches.
 - **Warm tuner (opt-in)** — set `WARM_TUNER_SECONDS` (e.g. `60`) to keep a
   tuner alive briefly after you stop watching, so flipping back to a channel
   is instant instead of waiting on the Tablo tuner spin-up again. A warm tuner
@@ -73,13 +72,36 @@ original project. The full review with details and reasoning is in
 - **Proper crypto randomness** (`crypto.randomBytes`/`randomUUID` instead of
   a clock-seeded Mersenne Twister) and the `keypress` git dependency pinned
   to a commit hash.
+- **Empty key env values no longer break signing** — `HashKey`, `DeviceKey`,
+  and `RSA` now fall back to the built-in defaults when set to an empty string
+  (e.g. `HashKey=""`), instead of signing device requests with an empty key.
+  An empty signing key produces a bad signature the Tablo rejects as
+  "Authentication failure," which is easy to misread as a device-side problem.
+
+### Usability & diagnostics
+
+- **Settings summary at startup** — the app prints the effective settings
+  (XML guide on/off, port, intervals, warm tuner, auto re-login, etc.) right
+  after boot, color-coded, so a misconfiguration is obvious without opening
+  the `.env`.
+- **Clear guide.xml message** — if Plex requests `/guide.xml` while
+  `CREATE_XML` is off, the app now returns a readable "XML guide is not
+  enabled — set `CREATE_XML=true`" message (and logs a warning) instead of a
+  bare 404. If the guide file isn't built yet, it says so.
+- **Automatic device ID** — the HDHomeRun `DEVICE_ID` shown to Plex must be a
+  unique 8-hex value. If it's unset or invalid, the app generates a stable,
+  machine-unique one (consistent across restarts so Plex keeps recognizing the
+  tuner) and warns you.
 
 ### Build
 
 - **GitHub Actions Windows build** — the Actions tab has a "Build Windows
   exe" workflow (manual "Run workflow" button on `main`; also auto-runs on
-  pushes to `claude/**` branches). Each run uploads a `tablo2plex-win-x64`
-  artifact.
+  pushes to `claude/**` branches). It builds the exe, downloads a static
+  ffmpeg, and publishes a **self-contained release zip** (exe + `ffmpeg.exe`)
+  alongside the bare exe, so a fresh download runs without ffmpeg already on
+  PATH. Passing a `release_tag` (or pushing a `v*` tag) also cuts a GitHub
+  release.
 
 ---
 

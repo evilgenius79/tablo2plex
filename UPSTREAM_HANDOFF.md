@@ -105,7 +105,8 @@ ready to fold upstream. File references point to where the change lives.
   `USER_NAME`/`USER_PASS` are set — refreshes + persists tokens, retries once,
   dedupes concurrent refreshes. `src/Device.js` (`refreshTokens`,
   `refreshTokensOnce`). NOTE: this recovers from *token expiry*; it does **not**
-  fix the HMAC key rotation described above.
+  fix a bad signing key (empty `HashKey`/`DeviceKey`, §1) or a real Tablo-side
+  signing change.
 - Guide served as a stream; single reused log write-stream; async guide I/O —
   removes event-loop stalls during playback. `src/Device.js`, `src/Logger.js`
 
@@ -151,9 +152,9 @@ ready to fold upstream. File references point to where the change lives.
 > re-login on token expiry, no event-loop stalls during playback), security
 > hardening (per-install creds key, log redaction, CORS/proxy, CSPRNG,
 > Docker secret exclusion), and a CI workflow that publishes a self-contained
-> Windows release (exe + bundled ffmpeg). Includes a device/firmware recon
-> tool. See `PERFORMANCE_AND_SECURITY_REVIEW.md` and `UPSTREAM_HANDOFF.md`.
->
-> Note: does not address the current device-`/watch` "Authentication failure"
-> (Tablo-side signing change) — see the root-cause analysis in
-> `UPSTREAM_HANDOFF.md` §1.
+> Windows release (exe + bundled ffmpeg). Also treats empty
+> `HashKey`/`DeviceKey`/`RSA` env values as unset (a common footgun — see
+> `UPSTREAM_HANDOFF.md` §1), adds a startup settings summary, a clear message
+> when `/guide.xml` is requested with `CREATE_XML` off, and auto-generates a
+> valid device ID. Includes a device/firmware recon tool. See
+> `PERFORMANCE_AND_SECURITY_REVIEW.md` and `UPSTREAM_HANDOFF.md`.
