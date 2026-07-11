@@ -9,7 +9,8 @@
       "WebFetch(domain:gennari.industries)",
       "WebFetch(domain:cookiecode.dev)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__Claude_Code_Remote__add_repo"
     ]
   }
 }
