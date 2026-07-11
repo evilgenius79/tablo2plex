@@ -34,11 +34,27 @@ jobs:
       - name: Build Windows executable
         run: npm run build:win
 
+      - name: Bundle ffmpeg
+        shell: pwsh
+        run: |
+          # Static Windows ffmpeg from BtbN (GitHub-hosted, reliable for CI).
+          # The app spawns `ffmpeg`, so ship it alongside the exe like the
+          # upstream releases do.
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_extract -Force
+          $ff = Get-ChildItem -Path ffmpeg_extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ff) { throw "ffmpeg.exe not found in download" }
+          Copy-Item $ff.FullName -Destination ffmpeg.exe -Force
+
+      - name: Package release zip
+        shell: pwsh
+        run: Compress-Archive -Path tablo2plex-win-x64.exe, ffmpeg.exe -DestinationPath tablo2plex-win-x64.zip -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: tablo2plex-win-x64
-          path: tablo2plex-win-x64.exe
+          path: tablo2plex-win-x64.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -49,5 +65,8 @@ jobs:
           # on tag pushes the tag already exists; on manual dispatch the
           # action creates the tag at the built commit
           tag_name: ${{ inputs.release_tag || github.ref_name }}
-          files: tablo2plex-win-x64.exe
+          # ship both the self-contained zip (exe + ffmpeg) and the bare exe
+          files: |
+            tablo2plex-win-x64.zip
+            tablo2plex-win-x64.exe
           generate_release_notes: true
