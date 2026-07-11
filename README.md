@@ -182,7 +182,7 @@ Make sure you edit your `.env` file with your personal info. See the [Configurat
 
 ## Proxy Setup
 
-When you first run the proxy, you will be asked to log into your Tablo account by providing your email and password. __Note: Your email and password are never stored locally and all returned credentials are stored encrypted.__ But when you first log in, your password and email is transmitted in plain text (nice one Tablo). So please don't setup the proxy on an untrusted network.
+When you first run the proxy, you will be asked to log into your Tablo account by providing your email and password. __Note: Your email and password are never stored locally — only the returned credentials are kept, and they are stored encrypted.__ The login itself is sent securely over HTTPS to Tablo's login server (it is *not* transmitted in plain text), and it only happens during first-time login; after that the encrypted creds file is used.
 
 It will ask you to select a profile or device if there is more than one on your account. Once done, it will download the channel lineup and start the proxy.
 
@@ -242,8 +242,8 @@ If everything goes right and the container starts, you should see files in your 
 
 ```cmd
 [info] No creds file found. Lets log into your Tablo account.
-[info] NOTE: Your password and email are never stored, but are transmitted in plain text.
-Please make sure you are on a trusted network before you continue.
+[info] NOTE: Your email and password are sent securely over HTTPS to Tablo's login server and are never stored on disk (only the resulting encrypted tokens are).
+[info] This only happens during first-time login; afterward the encrypted creds file is used.
 [info] Login was accepted!
 [info] Using profile Profile 1
 [info] Using device Tablo SID_<sid> @ http://192.168.1.134:8887

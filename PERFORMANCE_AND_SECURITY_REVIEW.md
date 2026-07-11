@@ -28,10 +28,11 @@ The following fixes from this review are implemented on this branch:
   because the Tablo kept producing segments during the cached session, ffmpeg
   bursts several seconds of video immediately so the client's buffer fills at
   once. A cached session is probed (1.5 s timeout) before reuse and falls
-  back to a fresh `/watch` if the Tablo tore it down early. Also added
-  `-muxdelay 0 -muxpreload 0` to drop the mpegts muxer's default 0.7 s of
-  output buffering. Note: nothing proxy-side can remove the tuner spin-up on
-  a *cold* tune — that delay is the Tablo hardware itself.
+  back to a fresh `/watch` if the Tablo tore it down early. Note: nothing
+  proxy-side can remove the tuner spin-up on a *cold* tune — that delay is the
+  Tablo hardware itself. (`-muxdelay 0 -muxpreload 0` were tried on the ffmpeg
+  output but starved the player's PCR/PTS lead and caused endless buffering,
+  so they were removed — the mpegts muxer keeps its default output timing.)
 - Warm tuner (opt-in, `WARM_TUNER_SECONDS`, default off): keeps a tuner
   session alive for N seconds after the client disconnects by periodically
   re-fetching its playlist, so switching back is instant. A warm session
@@ -356,9 +357,10 @@ for the IV and `crypto.randomUUID()` for the UUID.
 - **Path traversal:** `channelId` is only used after a successful lookup in
   `LINEUP_DATA`; `guide.xml` is served from a fixed path.
 - **TLS:** outbound requests to Tablo's cloud use `https` with default
-  certificate validation (the startup text saying credentials are
-  "transmitted in plain text" is overly pessimistic — the login POST is TLS;
-  plain HTTP is only used on the LAN between Plex and the proxy).
+  certificate validation. The old startup text claiming credentials are
+  "transmitted in plain text" was inaccurate — the login POST is TLS — and has
+  been corrected. Plain HTTP is only used on the LAN between Plex and the proxy
+  (and device requests, which carry HMAC-signed tokens, not the password).
 - **HMAC-MD5 device signing:** weak by modern standards, but it is Tablo's
   own protocol and cannot be changed client-side.
 

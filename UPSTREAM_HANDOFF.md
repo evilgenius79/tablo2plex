@@ -85,8 +85,9 @@ Every change below applies cleanly regardless of the auth situation and is
 ready to fold upstream. File references point to where the change lives.
 
 ### Streaming / channel performance
-- ffmpeg input-probe limits + `-http_persistent` + `-muxdelay/-muxpreload 0`
-  for faster time-to-first-frame. `src/Device.js` (`handleStreams`)
+- ffmpeg input-probe limits + `-http_persistent` for faster
+  time-to-first-frame. `src/Device.js` (`handleStreams`). (`-muxdelay/-muxpreload
+  0` were tried and reverted — they caused endless buffering.)
 - Watch-session cache: reuse a live `/watch` session on quick channel
   switch-back, skipping the device tuner spin-up. `src/Device.js`
   (`getPlaylistUrl`, `WATCH_CACHE`)
