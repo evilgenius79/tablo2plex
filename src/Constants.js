@@ -65,12 +65,12 @@ const DEFAULT_ENV_VALUES = [
         value: ''
     },
     {
-        desc: "; Username to use for when creds.bin isn't present.",
+        desc: "; Username to use for when creds.bin isn't present.\n; Setting both USER_NAME and USER_PASS also enables automatic re-login: if the\n; Tablo session token expires while running (streams start failing with an\n; \"Authentication failure\"), the app logs back in and refreshes it instead of\n; needing a manual re-cred.",
         key: 'USER_NAME',
         value: ''
     },
     {
-        desc: "; Password to use for when creds.bin isn't present.",
+        desc: "; Password to use for when creds.bin isn't present.\n; Also used for the automatic re-login described above.",
         key: 'USER_PASS',
         value: ''
     },

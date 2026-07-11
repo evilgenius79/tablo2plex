@@ -815,7 +815,9 @@ function startUpMessage(){
 
     Logger.info(`  Save log:             ${on(CONST.SAVE_LOG)}`);
 
-    Logger.info(`  Auto re-login:        ${on(CONST.USER_NAME != null && CONST.USER_PASS != null)}`);
+    const autoRelogin = CONST.USER_NAME != null && CONST.USER_PASS != null;
+
+    Logger.info(`  Auto re-login:        ${on(autoRelogin)}${autoRelogin ? "" : `  ${C_HEX.yellow}(set USER_NAME + USER_PASS to enable)${C_HEX.reset}`}`);
 
     Logger.info(`${C_HEX.yellow}--------------------------${C_HEX.reset}`);
 
