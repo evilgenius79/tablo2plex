@@ -64,10 +64,10 @@ The following fixes from this review are implemented on this branch:
 
 **Security**
 - §2.1 New installs generate a random 32-byte key (`creds.key`, mode `0600`)
-  for `creds.bin` (also `0600`). Existing installs keep decrypting via the
-  legacy built-in key — no migration needed, but re-running `--creds` upgrades
-  an install to the per-install key. **If you move an install to another
-  machine, copy `creds.key` along with `creds.bin`.** Bonus fix found while
+  for `creds.bin` (also `0600`). Installs still on the legacy built-in key are
+  **automatically migrated** to a per-install key the first time `creds.bin`
+  is read. **If you move an install to another machine, copy `creds.key`
+  along with `creds.bin`.** Bonus fix found while
   testing: a wrong-key/corrupted `creds.bin` used to crash the process with an
   unhandled cipher stream error; it is now handled as a bad creds file.
 - §2.2 `.dockerignore` now excludes `.env`, `creds.bin`, `creds.key`, `logs`,
@@ -80,10 +80,24 @@ The following fixes from this review are implemented on this branch:
   `crypto.randomUUID` instead of a clock-seeded Mersenne Twister
 - §2.7 `keypress` git dependency pinned to a commit hash
 
+Since implemented in a follow-up audit pass: `package-lock.json` is committed
+(§2.7) and Docker installs with `npm ci`; the image runs as the non-root
+`node` user (§2.2); `.env` is untracked/gitignored with a documented
+`.env.example`; credentials are no longer passed on the container argv;
+`--creds` actually forces a fresh login; the scheduler picks up interval
+changes from `.env`; `WARM_TUNER_SECONDS` is CLI-wired; `BIND_ADDRESS` and
+`MAX_OTT_STREAMS` were added; new `creds.bin` files use a random 16-byte IV
+(§2.6, legacy files still decrypt and are migrated on read); debug-log
+redaction is recursive; the guide build yields to the event loop
+periodically; and the PseudoTV fragment is checked for well-formedness
+before being spliced into `guide.xml`.
+
 Not implemented (needs a maintainer decision or hardware testing): the Tablo
-`keepalive` POST (§1.5), running the guide build in a worker thread (§1.3),
-committing `package-lock.json` (§2.7), and a non-root `USER` in the
-Dockerfile (§2.2).
+`keepalive` POST (§1.5 — active streams continuously re-fetch the HLS
+playlist, which acts as an implicit keepalive; adding an explicit `/watch`
+keepalive needs on-device testing) and running the guide build in a
+dedicated worker thread (§1.3 — the cooperative yielding above captures most
+of the benefit without risking the `pkg` single-binary builds).
 
 ---
 

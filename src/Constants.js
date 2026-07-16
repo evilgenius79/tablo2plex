@@ -579,7 +579,7 @@ function _init_lineup_interval() {
         if (Number.isNaN(Number(ARGV.channels))) {
             return 30 * (24 * 60 * 60 * 1000);
         }
-        return Number(ARGV.channels) * (24 * 60 * 60 * 1000)
+        return Number(ARGV.channels) * (24 * 60 * 60 * 1000);
     } else {
         return 30 * (24 * 60 * 60 * 1000);
     }
@@ -593,7 +593,7 @@ function _init_guide_interval() {
         if (Number.isNaN(Number(ARGV.guide))) {
             return 24 * (60 * 60 * 1000);
         }
-        return Number(ARGV.guide) * (60 * 60 * 1000)
+        return Number(ARGV.guide) * (60 * 60 * 1000);
     } else {
         return 24 * (60 * 60 * 1000);
     }
@@ -805,7 +805,7 @@ class CONST {
     /**
      * @type {string?}
      */
-    static #SCHEDULE_GUIDE = null
+    static #SCHEDULE_GUIDE = null;
     /**
      * @type {string?}
      */

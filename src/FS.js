@@ -129,7 +129,7 @@ function _ensurePathExists(targetPath, fileData, mode = undefined) {
 
         Logger.error(targetPath);
 
-        Logger.error(err)
+        Logger.error(err);
     }
 };
 
@@ -152,8 +152,13 @@ function _formatFileSize(bytes) {
 };
 
 /**
+ * Last printed 10%-bucket for the non-TTY loading bar throttle.
+ */
+var _lastLoadingBucket = -1;
+
+/**
  * Loading bar function.
- * 
+ *
  * @param {number} totalSteps - total pos
  * @param {number} currentStep - current pos
  * @param {boolean|undefined} withSize - shows size of file as well
@@ -163,6 +168,20 @@ function _consoleLoadingBar(totalSteps, currentStep, withSize = false) {
     var barLength = 40;
     // Calculate the percentage completed
     const percentage = (currentStep / totalSteps) * 100;
+
+    // Without a TTY (Docker, systemd journal) every call prints a full log
+    // line, which floods the log on multi-thousand-step runs — only print
+    // when the bar crosses a 10% step.
+    if (!process.stdout.isTTY) {
+        const bucket = Math.min(10, Math.floor(percentage / 10));
+
+        if (bucket == _lastLoadingBucket && currentStep < totalSteps) {
+            return 1;
+        }
+
+        _lastLoadingBucket = currentStep >= totalSteps ? -1 : bucket;
+    }
+
     // Calculate the number of bars to display
     const bars = Math.floor((barLength * currentStep) / totalSteps);
     // Create the loading bar string

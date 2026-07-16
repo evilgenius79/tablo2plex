@@ -116,29 +116,29 @@ async function runServer() {
         // everything gets routed here to route.
         app.get("/discover.json", async (req, res) => {
             return await _discover(req, res);
-        })
+        });
 
         app.get("/lineup.json", async (req, res) => {
             return await _lineup(req, res);
-        })
+        });
 
         app.get("/lineup_status.json", async (req, res) => {
             return await _lineup_status(req, res);
-        })
+        });
 
         app.get("/channel/:channelId", async (req, res) => {
             return await _channel(req, res);
-        })
+        });
 
         // Always registered so a request when CREATE_XML is off returns a
         // helpful explanation instead of a bare 404.
         app.get("/guide.xml", async (req, res) => {
             return await _guide_serve(req, res);
-        })
+        });
 
         app.get("/favicon.ico", async (req, res) => {
             res.end("");
-        })
+        });
 
         // Start the server. The server is unauthenticated by design (Plex
         // expects an open HDHomeRun-style device), so BIND_ADDRESS lets

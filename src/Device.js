@@ -896,7 +896,7 @@ function makeDiscover(){
         LocalIP: CONST.SERVER_URL,// SERVER_URL,
         LineupURL: `${CONST.SERVER_URL}/lineup.json`, // `${SERVER_URL}/lineup.json`
         TunerCount: TUNER_COUNT // TUNER_COUNT
-    }
+    };
 };
 
 /**
@@ -1486,7 +1486,7 @@ async function reqCreds() {
 
             Logger.debug("server info");
 
-            Logger.debug(reqPars);
+            Logger.debug(redactForLog(reqPars));
         }
     } catch (error) {
         Logger.error(`Could not reach device. Make sure it's on the same network and try again!`);
@@ -1592,13 +1592,85 @@ async function readCreds() {
 };
 
 /**
+ * Lightweight well-formedness check for an XML fragment before it gets
+ * spliced verbatim into guide.xml — unbalanced or stray tags in the
+ * PseudoTV file would otherwise corrupt the whole guide (and Plex's
+ * parse of it). Not a full validator: it only checks tag balance.
+ *
+ * @param {string} fragment
+ * @returns {boolean}
+ */
+function isBalancedXMLFragment(fragment) {
+    // strip constructs that legally contain angle brackets without being tags
+    const stripped = fragment
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
+
+    // a tag, allowing quoted attribute values to contain < or >
+    const tagRe = /<(?:[^<>"']|"[^"]*"|'[^']*')*>/g;
+
+    // any '<' or '>' left over outside a tag means malformed markup
+    const leftovers = stripped.replace(tagRe, "");
+
+    if (leftovers.includes("<") || leftovers.includes(">")) {
+        return false;
+    }
+
+    /**
+     * @type {string[]}
+     */
+    const stack = [];
+
+    const tags = stripped.match(tagRe) || [];
+
+    for (const tag of tags) {
+        if (tag.startsWith("<?") || tag.startsWith("<!")) {
+            continue; // declaration / doctype
+        }
+
+        if (tag.endsWith("/>")) {
+            continue; // self-closing
+        }
+
+        const nameMatch = tag.match(/^<\/?\s*([^\s/>]+)/);
+
+        if (!nameMatch) {
+            return false;
+        }
+
+        if (tag.startsWith("</")) {
+            if (stack.pop() != nameMatch[1]) {
+                return false;
+            }
+        } else {
+            stack.push(nameMatch[1]);
+        }
+    }
+
+    return stack.length == 0;
+};
+
+/**
  * Creates XML guide data from downloaded guide files
- * 
- * @param {channelLineup[]} lineUp 
+ *
+ * @param {channelLineup[]} lineUp
  */
 async function parseGuideData(lineUp) {
     try {
         const guideDays = JSDate.getDaysFromToday(CONST.GUIDE_DAYS);
+
+        // The guide build is CPU-bound and can run for a while on large
+        // lineups; yield to the event loop periodically so live ffmpeg
+        // pipes and HTTP requests keep flowing while it builds.
+        var programmesSinceYield = 0;
+
+        const yieldIfNeeded = async () => {
+            if (++programmesSinceYield >= 250) {
+                programmesSinceYield = 0;
+
+                await new Promise(resolve => setImmediate(resolve));
+            }
+        };
 
         const xw = new XMLWriter(true);
 
@@ -1703,6 +1775,8 @@ async function parseGuideData(lineUp) {
                 const tdData = filesData[q];
 
                 for (let z = 0; z < tdData.length; z++) {
+                    await yieldIfNeeded();
+
                     const tdEL = tdData[z];
 
                     const end = new Date(tdEL.datetime).getTime() + (tdEL.duration * 1000);
@@ -1777,7 +1851,7 @@ async function parseGuideData(lineUp) {
                                 }
                                 break;
                             case "movieAiring":
-                                date = `${tdEL.movieAiring.releaseYear}0000`
+                                date = `${tdEL.movieAiring.releaseYear}0000`;
                                 break;
                             default:
                                 break;
@@ -1863,7 +1937,13 @@ async function parseGuideData(lineUp) {
 
                 const cleanedData = cleanedLines.join('\n');
 
-                xw.writeRaw(cleanedData);
+                // the fragment is written raw, so refuse it when it would
+                // break (or inject into) the rest of guide.xml
+                if (isBalancedXMLFragment(cleanedData)) {
+                    xw.writeRaw(cleanedData);
+                } else {
+                    Logger.warn("PseudoTV xmltv.xml is not well-formed XML — skipping it so guide.xml stays valid.");
+                }
             }
         }
 
@@ -2092,7 +2172,7 @@ async function parseLineup(lineup = undefined) {
                     type: "ota",
                     streamUrl: `${CREDS_DATA.device.url}/guide/channels/${el.identifier}/watch`,
                     srcURL: `${CREDS_DATA.device.url}/guide/channels/${el.identifier}/watch`
-                }
+                };
             } else if (el.kind == "ott") {
                 var GuideNumber = `${el.ott.major}.${el.ott.minor}`;
 
@@ -2110,7 +2190,7 @@ async function parseLineup(lineup = undefined) {
                         type: "ott",
                         streamUrl: el.ott.streamUrl,
                         srcURL: `${CREDS_DATA.device.url}/guide/channels/${el.identifier}/watch`,
-                    }
+                    };
                 }
             } else {
                 Logger.error("Unknown lineup type:");

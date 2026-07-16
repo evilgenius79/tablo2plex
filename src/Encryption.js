@@ -327,13 +327,13 @@ class Encryption {
         const amount = (pull & 15) + 1;
 
         for (let i = 0; i < amount; i++) {
-            mt.random_int()
+            mt.random_int();
         };
 
         const ivBuff = Buffer.alloc(16, 0);
 
         for (let i = 0; i < (16 / 4); i++) {
-            ivBuff.writeUInt32LE(mt.random_int(), i * 4)
+            ivBuff.writeUInt32LE(mt.random_int(), i * 4);
         };
 
         const cipher = createDecipheriv("aes-256-cbc", keyBuff, ivBuff);
