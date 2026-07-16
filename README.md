@@ -192,6 +192,8 @@ Besides the ``.env`` settings, you can run the proxy with a command line to forc
 
 Use the ``.env`` file to set the options you would like to use with the Tablo device and proxy. You can also pass them as a command line at start.
 
+*The app creates a default ``.env`` on first run (see [.env.example](.env.example) for a documented template). ``.env`` is excluded from git so credentials placed in it can't be committed by accident.*
+
 | `.env` Variable          | Commandline        | Type      | Desc                                                                                                                                                                                                                                    |
 | :---                     | :---               | :---:     | :---                                                                                                                                                                                                                                    |
 | ``-none-``               | ``-c,--creds``     | `boolean` | Force the app to ask for a login again to create new credentials files (Checks every time the app runs)                                                                                                                                 |
@@ -208,10 +210,13 @@ Use the ``.env`` file to set the options you would like to use with the Tablo de
 |``OUT_DIR``               | ``-o,--outdir``    | `string`  | Overide the output directory. Default is excution directory. (Disabled in `.env` by default)                                                                                                                                            |
 |``TABLO_DEVICE``          | ``-v,--device``    | `string`  | Server ID of the Tablo device to use if you have more than one on your account. (Disabled in `.env` by default)                                                                                                                         |
 |``USER_NAME``             | ``-u,--user``      | `string`  | Username to use for when creds.bin isn't present. (Disabled in `.env` by default)                                                                                                                                                       |
-|``USER_PASS``             | ``-w,--pass``      | `string`  | Password to use for when creds.bin isn't present. (Disabled in `.env` by default)                                                                                                                                                       |
+|``USER_PASS``             | ``-w,--pass``      | `string`  | Password to use for when creds.bin isn't present. (Disabled in `.env` by default)<br>Note: while set, the password sits in **plain text** in `.env` — the tradeoff for automatic re-login. See [SECURITY.md](SECURITY.md).              |
 |``IP_ADDRESS``            | ``-a,--ip_address``| `string`  | Set the IP Address of Tablo2Plex add statically. (Disabled in `.env` by default)                                                                                                                                                        |
 |``GUIDE_UPDATE_INTERVAL`` | ``-e,--guide``     | `number`  | How often to update your XML guide data in hours. Default ``24``                                                                                                                                                                        |
 |``INCLUDE_OTT``           | ``-t, --ott``      | `boolean` | Include OTT (Over-The-Top) channels in the line up. Default ``true``                                                                                                                                                                    |
+|``WARM_TUNER_SECONDS``    | ``-m, --warm``     | `number`  | Seconds to keep a tuner "warm" after you stop watching a channel so switching back is instant. A warm tuner still occupies a physical tuner (auto-reclaimed when needed). Default ``0`` (disabled)                                      |
+|``BIND_ADDRESS``          | ``-b, --bind``     | `string`  | Local address the server binds to, to limit which networks can reach the (unauthenticated) server. Default empty (all interfaces)                                                                                                       |
+|``MAX_OTT_STREAMS``       | ``-q, --maxott``   | `number`  | Maximum concurrent OTT streams. OTA is capped by your Tablo's tuners but each OTT stream runs its own ffmpeg, so a cap protects the host. Default ``8``, ``0`` = unlimited                                                              |
 
 ### Plex Configuration
 
@@ -259,7 +264,7 @@ If everything goes right and the container starts, you should see files in your 
 [info] Server v0.9.3 is running on http://172.17.0.2:8181 with 2 tuners
 ```
 
-You can override additional environment variables by adding more `-e` parameters to the Docker command-line (ex. `-e GUIDE_DAYS=7 -e LOG_LEVEL=debug`). Once the creds.bin file is created with your encypted TabloTV credentials, you no longer need to specify the `USER_NAME` and `USER_PASS` parameters (this will also prevent your credentials from showing up on the command-line in a process list: the defaults of 'user' and 'pass' will appear but the program won't actually try to use them since the __creds.bin__ file is already present).
+You can override additional environment variables by adding more `-e` parameters to the Docker command-line (ex. `-e GUIDE_DAYS=7 -e LOG_LEVEL=debug`). Once the creds.bin file is created with your encypted TabloTV credentials, you no longer need to specify the `USER_NAME` and `USER_PASS` parameters — remove them so your credentials stop appearing in `docker inspect` / the container environment. (They are passed to the app via environment variables only, never on the process command line, so they don't show up in a `ps` process list, and the image itself has no credential defaults baked in. The container also runs as the unprivileged `node` user.)
 
 Instead of the Docker command-line, you can also use a [Docker compose](https://docs.docker.com/reference/cli/docker/compose/) file. An [example YAML file](docker-compose-example.yaml) is included in the repo. Modify it for your particular environment and then use it to build and run the container:
 

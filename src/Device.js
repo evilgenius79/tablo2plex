@@ -53,6 +53,14 @@ const LINEUP_FILE = path.join(CONST.DIR_NAME, "lineup.json");
 const LINEUP_DATA = {};
 
 /**
+ * Cached JSON serialization of LINEUP_DATA served by /lineup.json.
+ * Invalidated whenever parseLineup rebuilds the lineup.
+ *
+ * @type {string|null}
+ */
+var LINEUP_JSON_CACHE = null;
+
+/**
  * Source path to guide.xml
  */
 const GUIDE_FILE = path.join(CONST.DIR_NAME, "guide.xml");
@@ -77,8 +85,9 @@ const KEEP_ALIVE_AGENT = new https.Agent({ keepAlive: true, maxSockets: 8 });
  * @param {any} obj
  * @returns {any}
  */
-function redactForLog(obj) {
-    if (obj == null || typeof obj != "object") {
+function redactForLog(obj, depth = 0) {
+    // depth guard against cycles / pathological nesting
+    if (obj == null || typeof obj != "object" || depth > 8) {
         return obj;
     }
 
@@ -94,6 +103,9 @@ function redactForLog(obj) {
 
         if (SENSITIVE.includes(key.toLowerCase()) && typeof value == "string") {
             copy[key] = value.slice(0, 6) + "...[redacted]";
+        } else if (value != null && typeof value == "object") {
+            // recurse so nested token fields get masked too
+            copy[key] = redactForLog(value, depth + 1);
         } else {
             copy[key] = value;
         }
@@ -337,10 +349,21 @@ var CURRENT_STREAMS = 0;
  *
  * Opt-in: a warm tuner still occupies a physical tuner, so this trades tuner
  * availability for switch speed. 0 disables it (default). Set e.g. 60 to make
- * quick channel surfing instant. Read from env directly to avoid the full
- * Constants plumbing while this is experimental.
+ * quick channel surfing instant.
  */
-const WARM_TUNER_SECONDS = Math.max(0, parseInt(process.env.WARM_TUNER_SECONDS || "0", 10) || 0);
+const WARM_TUNER_SECONDS = CONST.WARM_TUNER_SECONDS;
+
+/**
+ * Maximum concurrent OTT streams. OTA is capped by the Tablo's physical
+ * tuners, but every OTT stream spawns its own ffmpeg — without a cap a
+ * client could overload the host. 0 = unlimited.
+ */
+const MAX_OTT_STREAMS = CONST.MAX_OTT_STREAMS;
+
+/**
+ * Count of running OTT (non-tuner) ffmpeg streams.
+ */
+var CURRENT_OTT_STREAMS = 0;
 
 /**
  * Channels currently held warm after a client left.
@@ -575,6 +598,18 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
         }
 
         CURRENT_STREAMS += 1;
+    } else {
+        // OTT streams don't hold a tuner but each one runs an ffmpeg
+        // process — cap them so the host can't be overloaded.
+        if (MAX_OTT_STREAMS > 0 && CURRENT_OTT_STREAMS >= MAX_OTT_STREAMS) {
+            Logger.error(`Client ${ip && ip.replace(/::ffff:/, "")} connected to ${channelId} (IPTV), but max OTT streams (${MAX_OTT_STREAMS}) are running.`);
+
+            res.status(500).send('Failed to start stream');
+
+            return;
+        }
+
+        CURRENT_OTT_STREAMS += 1;
     }
 
     var released = false;
@@ -589,6 +624,8 @@ async function handleStreams(req, res, ip, channelId, selectedChannel){
 
             if (usesTuner && !handedToWarm) {
                 CURRENT_STREAMS -= 1;
+            } else if (!usesTuner) {
+                CURRENT_OTT_STREAMS = Math.max(0, CURRENT_OTT_STREAMS - 1);
             }
         }
     };
@@ -811,6 +848,10 @@ function startUpMessage(){
 
     Logger.info(`  Warm tuner (seconds): ${WARM_TUNER_SECONDS}`);
 
+    Logger.info(`  Max OTT streams:      ${MAX_OTT_STREAMS == 0 ? "unlimited" : MAX_OTT_STREAMS}`);
+
+    Logger.info(`  Bind address:         ${CONST.BIND_ADDRESS != "" ? CONST.BIND_ADDRESS : "all interfaces"}`);
+
     Logger.info(`  Log level:            ${CONST.LOG_TYPE}`);
 
     Logger.info(`  Save log:             ${on(CONST.SAVE_LOG)}`);
@@ -865,7 +906,11 @@ function makeDiscover(){
  * @param {Response} res 
  */
 async function _lineup(req, res) {
-    const lineup = Object.values(LINEUP_DATA);
+    // Plex polls this endpoint often and the lineup only changes when
+    // parseLineup runs, so serve the cached serialization.
+    if (LINEUP_JSON_CACHE == null) {
+        LINEUP_JSON_CACHE = JSON.stringify(Object.values(LINEUP_DATA));
+    }
 
     const headers = {
         'Content-Type': 'application/json'
@@ -873,7 +918,7 @@ async function _lineup(req, res) {
 
     res.writeHead(200, headers);
 
-    res.end(JSON.stringify(lineup));
+    res.end(LINEUP_JSON_CACHE);
 
     return;
 };
@@ -1097,16 +1142,24 @@ async function makeHTTPSRequest(method, hostname, path, headers, data = "", just
         };
         // Create the request
         const req = https.request(options, (res) => {
-            let dataIn = '';
+            // Collect Buffer chunks and join once at the end — string
+            // concatenation re-copies the whole body on every chunk, which
+            // hurts on multi-MB guide responses.
+            /**
+             * @type {Buffer[]}
+             */
+            const chunks = [];
             // A chunk of data has been received.
             res.on('data', (chunk) => {
-                dataIn += chunk;
+                chunks.push(chunk);
             });
             // The whole response has been received. Parse and resolve the result.
             res.on('end', () => {
                 if (justHeaders) {
                     resolve(res.headers);
                 }
+
+                const dataIn = Buffer.concat(chunks).toString();
 
                 if (res.statusCode == undefined || (res.statusCode < 200 || res.statusCode > 299)){
                     Logger.error(`https://${hostname}${path} request failed with status code:`, res.statusCode);
@@ -1259,7 +1312,7 @@ async function reqCreds() {
             if (deviceData.code == undefined) {
                 Logger.debug("lighthousetv account");
 
-                Logger.debug(deviceData);
+                Logger.debug(redactForLog(deviceData));
 
                 // lets get the profile
                 if (deviceData.profiles == undefined) {
@@ -1498,6 +1551,24 @@ async function readCreds() {
             Object.assign(CREDS_DATA, JSON.parse(encryCreds.toString()));
 
             TUNER_COUNT = CREDS_DATA.tuners;
+
+            // One-time migration: installs from before per-install keys are
+            // still encrypted with the key baked into the public source.
+            // Re-encrypt with a fresh random key now that we know the file
+            // decrypts fine, so the published key stops mattering.
+            if (credsKey == undefined) {
+                try {
+                    const newKey = Encryption.newKey();
+
+                    FS.writeFile(newKey, KEY_FILE, 0o600);
+
+                    FS.writeFile(Encryption.crypt(JSON.stringify(CREDS_DATA), newKey), CONST.CREDS_FILE, 0o600);
+
+                    Logger.info("Migrated creds.bin from the legacy built-in key to a per-install key (creds.key).");
+                } catch (error) {
+                    Logger.warn("Could not migrate creds.bin to a per-install key:", error);
+                }
+            }
         } catch (error) {
             try {
                 Logger.error("Issue reading decrypted creds file, Removing creds file. Please start app again or use --creds command line to create a new file.");
@@ -2047,6 +2118,8 @@ async function parseLineup(lineup = undefined) {
                 Logger.error(el);
             }
         }
+
+        LINEUP_JSON_CACHE = JSON.stringify(Object.values(LINEUP_DATA));
 
         return 1;
     } catch (error) {

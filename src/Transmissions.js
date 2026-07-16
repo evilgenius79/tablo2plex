@@ -140,10 +140,18 @@ async function runServer() {
             res.end("");
         })
 
-        // Start the server
-        app.listen(CONST.PORT, () => {
-            startUpMessage();
-        });
+        // Start the server. The server is unauthenticated by design (Plex
+        // expects an open HDHomeRun-style device), so BIND_ADDRESS lets
+        // users limit which interface can reach it.
+        if (CONST.BIND_ADDRESS != "") {
+            app.listen(Number(CONST.PORT), CONST.BIND_ADDRESS, () => {
+                startUpMessage();
+            });
+        } else {
+            app.listen(CONST.PORT, () => {
+                startUpMessage();
+            });
+        }
     }
 };
 

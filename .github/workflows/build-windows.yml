@@ -41,6 +41,10 @@ jobs:
           # The app spawns `ffmpeg`, so ship it alongside the exe like the
           # upstream releases do.
           Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          # log the hash of what was actually shipped — the 'latest' release
+          # has no stable checksum to pin against, so at least make each
+          # build's ffmpeg traceable from the CI log
+          Get-FileHash ffmpeg.zip -Algorithm SHA256 | Format-List
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_extract -Force
           $ff = Get-ChildItem -Path ffmpeg_extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           if (-not $ff) { throw "ffmpeg.exe not found in download" }

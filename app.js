@@ -1,5 +1,7 @@
 // @ts-check
 
+const fs = require('fs');
+
 const {
     exit
 } = require('./src/CommandLine');
@@ -67,8 +69,17 @@ var GUIDE_SCHEDULER;
         Logger.info(`${C_HEX.yellow}Running forced one-time credentials creation...${C_HEX.reset}`);
 
         Logger.info(`${C_HEX.green}NOTE:${C_HEX.reset} Your email and password are sent securely over HTTPS to Tablo's login server and are never stored on disk (only the resulting encrypted tokens are).`);
-        
+
         Logger.info(`This only happens during first-time login; afterward the encrypted creds file is used.`);
+
+        // remove any existing creds so a fresh login is actually forced
+        // (previously this branch reused the old creds.bin, so --creds
+        // never recreated anything)
+        if (FS.fileExists(CONST.CREDS_FILE)) {
+            fs.unlinkSync(CONST.CREDS_FILE);
+        }
+
+        await reqCreds();
 
         LINEUP_SCHEDULER = new Scheduler(CONST.SCHEDULE_LINEUP, "Update channel lineup", CONST.LINEUP_UPDATE_INTERVAL, makeLineup);
 

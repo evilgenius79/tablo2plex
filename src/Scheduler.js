@@ -28,18 +28,25 @@ class Scheduler {
 
         this.timeoutId = null;
 
-        if (!FS.fileExists(schedulerFile)) {
-            this.interval = interval;
+        // The configured interval always wins — only nextCheck persists.
+        // (Previously the interval was read back from the schedule file, so
+        // changing GUIDE_UPDATE_INTERVAL / LINEUP_UPDATE_INTERVAL in .env had
+        // no effect until the schedule JSON was deleted.)
+        this.interval = interval;
 
+        if (!FS.fileExists(schedulerFile)) {
             this.nextCheck = JSDate.getRFC1123DateString();
 
             this._saveToFile();
         } else {
             const data = JSON.parse(fs.readFileSync(schedulerFile, 'utf8'));
 
-            this.interval = data.interval;
-
             this.nextCheck = data.nextCheck;
+
+            if (data.interval != interval) {
+                // persist the new interval so the file reflects reality
+                this._saveToFile();
+            }
         }
 
         if (isNaN(new Date(this.nextCheck).getTime())) {

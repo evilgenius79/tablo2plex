@@ -23,6 +23,7 @@
     },
     "homepage": "https://github.com/hearhellacopters/tablo2plex#readme",
     "dependencies": {
+        "commander": "^12.1.0",
         "dotenv": "^16.4.1",
         "express": "^5.1.0",
         "inquirer": "^12.9.6",
@@ -36,7 +37,6 @@
         "@hearhellacopters/exe": "^2.1.5",
         "@types/node": "^24.10.9",
         "@yao-pkg/pkg": "^6.12.0",
-        "commander": "^12.1.0",
         "eslint": "^9.4.0",
         "eslint-plugin-jsdoc": "^48.2.7"
     }

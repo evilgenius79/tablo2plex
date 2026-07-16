@@ -4,7 +4,7 @@ node_modules/
 logs/*
 !logs/README.md
 # personal files
-package-lock.json
+.env
 creds.bin
 creds.key
 schedule_lineup.json

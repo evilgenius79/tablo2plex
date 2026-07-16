@@ -70,7 +70,7 @@ const DEFAULT_ENV_VALUES = [
         value: ''
     },
     {
-        desc: "; Password to use for when creds.bin isn't present.\n; Also used for the automatic re-login described above.",
+        desc: "; Password to use for when creds.bin isn't present.\n; Also used for the automatic re-login described above.\n; SECURITY NOTE: setting this stores your Tablo password in PLAIN TEXT in\n; this file for as long as it's set. That's the deliberate tradeoff for\n; automatic re-login. If you don't want that, leave it empty after the\n; first login and re-run with --creds when the session eventually expires.",
         key: 'USER_PASS',
         value: ''
     },
@@ -93,6 +93,16 @@ const DEFAULT_ENV_VALUES = [
         desc: "; Seconds to keep a tuner \"warm\" after you stop watching a channel, so\n; switching back to it is instant instead of waiting ~5-6s for the Tablo to\n; spin the tuner up again. NOTE: a warm tuner still occupies one of your\n; physical tuners for this long; it is auto-reclaimed if all tuners are needed\n; for new streams. 0 disables it (default). Try \"60\" for snappy channel surfing.",
         key: 'WARM_TUNER_SECONDS',
         value: '0'
+    },
+    {
+        desc: "; Local address the server binds to. Empty (default) listens on all\n; interfaces. Set to e.g. \"192.168.1.10\" or \"127.0.0.1\" to limit which\n; networks can reach the (unauthenticated) LAN server.",
+        key: 'BIND_ADDRESS',
+        value: ''
+    },
+    {
+        desc: "; Maximum concurrent OTT (streaming) channels. OTA channels are capped by\n; your Tablo's physical tuners, but OTT streams are not — each one runs an\n; ffmpeg process, so an unbounded number can overload the host.\n; default \"8\", 0 = unlimited.",
+        key: 'MAX_OTT_STREAMS',
+        value: '8'
     }
 ];
 
@@ -315,6 +325,9 @@ PROGRAM
     .addOption(new Option('-a, --ip_address <string>', 'Set the IP Address of Tablo2Plex statically.').env("IP_ADDRESS"))
     .addOption(new Option(`-e, --guide <number>`, 'How often to update your XML guide data in hours, default once a day.').env("GUIDE_UPDATE_INTERVAL"))
     .addOption(new Option(`-t, --ott <boolean>`, 'Include OTT (Over-The-Top) channels in the line up.').env("INCLUDE_OTT"))
+    .addOption(new Option(`-m, --warm <number>`, 'Seconds to keep a tuner warm after a client disconnects. 0 disables.').env("WARM_TUNER_SECONDS"))
+    .addOption(new Option(`-b, --bind <string>`, 'Local address the server binds to. Empty listens on all interfaces.').env("BIND_ADDRESS"))
+    .addOption(new Option(`-q, --maxott <number>`, 'Maximum concurrent OTT streams. 0 = unlimited.').env("MAX_OTT_STREAMS"))
     ;
 
 PROGRAM.parse(process.argv);
@@ -611,8 +624,59 @@ function _init_ott() {
 };
 
 /**
- * Gets machine architecture 
- * 
+ * confirms seconds to keep a tuner warm after a client disconnects
+ *
+ * @returns {number} seconds, 0 disables
+ */
+function _init_warm_tuner() {
+    if (ARGV.warm == "" || ARGV.warm == undefined) {
+        return 0;
+    }
+
+    const num = Number(ARGV.warm);
+
+    if (Number.isFinite(num) && num > 0) {
+        return Math.floor(num);
+    }
+
+    return 0;
+};
+
+/**
+ * confirms local address the server binds to
+ *
+ * @returns {string} address, "" for all interfaces
+ */
+function _init_bind_address() {
+    if (ARGV.bind != "" && ARGV.bind != undefined) {
+        return ARGV.bind;
+    }
+
+    return "";
+};
+
+/**
+ * confirms max concurrent OTT streams
+ *
+ * @returns {number} stream cap, 0 for unlimited
+ */
+function _init_max_ott() {
+    if (ARGV.maxott == "" || ARGV.maxott == undefined) {
+        return 8;
+    }
+
+    const num = Number(ARGV.maxott);
+
+    if (Number.isFinite(num) && num >= 0) {
+        return Math.floor(num);
+    }
+
+    return 8;
+};
+
+/**
+ * Gets machine architecture
+ *
  * @returns {string}
  */
 function _get_machine_architecture() {
@@ -750,6 +814,18 @@ class CONST {
      * @type {string?}
      */
     static #MACHINE_OS = null;
+    /**
+     * @type {number?}
+     */
+    static #WARM_TUNER_SECONDS = null;
+    /**
+     * @type {string?}
+     */
+    static #BIND_ADDRESS = null;
+    /**
+     * @type {number?}
+     */
+    static #MAX_OTT_STREAMS = null;
     static keys = [
         "ARGV",
         "DIR_NAME",
@@ -779,7 +855,10 @@ class CONST {
         "SCHEDULE_LINEUP",
         "SCHEDULE_GUIDE",
         "MACHINE_ARCH",
-        "MACHINE_OS"
+        "MACHINE_OS",
+        "WARM_TUNER_SECONDS",
+        "BIND_ADDRESS",
+        "MAX_OTT_STREAMS"
     ];
     /**
      * Init constants
@@ -844,6 +923,12 @@ class CONST {
         this.#MACHINE_ARCH = _get_machine_architecture();
 
         this.#MACHINE_OS = _get_machine_os();
+
+        this.#WARM_TUNER_SECONDS = _init_warm_tuner();
+
+        this.#BIND_ADDRESS = _init_bind_address();
+
+        this.#MAX_OTT_STREAMS = _init_max_ott();
     };
     /**
      * Command line arguments.
@@ -1366,8 +1451,62 @@ class CONST {
         }
     };
     /**
+     * Seconds to keep a tuner warm after a client disconnects. 0 disables.
+     *
+     * @type {number}
+     */
+    static get WARM_TUNER_SECONDS() {
+        if (this.#WARM_TUNER_SECONDS != null) {
+            return this.#WARM_TUNER_SECONDS;
+        } else {
+            this.init();
+
+            if (this.#WARM_TUNER_SECONDS != null) {
+                return this.#WARM_TUNER_SECONDS;
+            } else {
+                return 0;
+            }
+        }
+    };
+    /**
+     * Local address the server binds to. "" listens on all interfaces.
+     *
+     * @type {string}
+     */
+    static get BIND_ADDRESS() {
+        if (this.#BIND_ADDRESS != null) {
+            return this.#BIND_ADDRESS;
+        } else {
+            this.init();
+
+            if (this.#BIND_ADDRESS != null) {
+                return this.#BIND_ADDRESS;
+            } else {
+                return "";
+            }
+        }
+    };
+    /**
+     * Maximum concurrent OTT streams. 0 = unlimited.
+     *
+     * @type {number}
+     */
+    static get MAX_OTT_STREAMS() {
+        if (this.#MAX_OTT_STREAMS != null) {
+            return this.#MAX_OTT_STREAMS;
+        } else {
+            this.init();
+
+            if (this.#MAX_OTT_STREAMS != null) {
+                return this.#MAX_OTT_STREAMS;
+            } else {
+                return 8;
+            }
+        }
+    };
+    /**
      * Current .env values
-     * 
+     *
      * @type {{[key: string]: any}}
      */
     static get CURRENT_ENV_VALUES() {

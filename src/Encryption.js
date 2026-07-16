@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const os = require('os');
 const {
     createHmac,
     createHash,
@@ -16,11 +15,14 @@ const {
 
 /**
  * new MersenneTwister().
- * 
+ *
  * Can be seeded with a 4 byte Buffer or number.
- * 
+ *
  * Use ``random_int()`` for random number on [0,0xffffffff]-interval.
- * 
+ *
+ * Only kept so creds files written in the legacy format (IV derived from a
+ * 4-byte MT seed) still decrypt — new files store a random 16-byte IV.
+ *
  * @class
  * @param {Buffer|number|undefined} seed - Can be seeded
  */
@@ -239,313 +241,6 @@ class MersenneTwister {
 };
 
 /**
- * Gets host name for UUID
- * 
- * @returns {string} string
- */
-function get_machine_hostname() {
-    // Check if the code is running in a Node.js environment
-    if (typeof process !== 'undefined' && process.release.name === 'node') {
-        return os.hostname();
-    }
-    else {
-        // Handle other environments or defaults
-        return 'Unknwn';
-    }
-};
-
-/**
- * Camps number between 1 and 5.
- * 
- * If undefined returns 4 for UUID.
- * 
- * @param {number} number number
- * @returns {number} number
- */
-function camp(number) {
-    if (number < 1) {
-        return 1;
-    }
-    else if (number > 5) {
-        return 5;
-    }
-    else if (number == undefined) {
-        return 4;
-    }
-    else {
-        return number;
-    }
-}
-
-/**
- * For converting UUIDs strings to buffer.
- * 
- * @param {string} hexString hex string.
- * @returns {Buffer} buffer
- */
-function _hex_string_to_Buffer(hexString) {
-    hexString = hexString.replace(/-/g, "");
-    // Check if the hex string has an odd length, and pad it with a leading "0" if needed.
-    if (hexString.length % 2 !== 0) {
-        hexString = "0" + hexString;
-    }
-    // Create a Buffer of the correct length.
-    const buffer = Buffer.alloc(hexString.length / 2);
-    // Parse the hex string and populate the Uint8Array.
-    for (let i = 0; i < hexString.length; i += 2) {
-        const byte = parseInt(hexString.substring(i, i + 2), 16);
-
-        buffer[i / 2] = byte;
-    }
-    return buffer;
-};
-
-/**
- * Generates a UUID as Uint8Array, Buffer or Hex string (default).
- * 
- * @param {number|undefined} version - UUID version 1-5 (default 4)
- * @param {{seed?:undefined|Buffer,mac?:undefined|Buffer}|undefined} options - Object with asBuffer, asArray or asHex as true (default is asHex). If seeding is needed, use ``{seed: seed}``.If a mac ID is needed., use ``{mac: mac}``. Must be UInt8Array or Buffer of 16 bytes.
- * @param {boolean} asBuffer - to return buffer
- * @returns {string|Buffer} string
- */
-function _UUID(version = 4, options = {}, asBuffer = false) {
-    /**
-     * @type {Uint8Array|Buffer}
-     */
-    var buff;
-
-    const seed = options && options.seed;
-
-    const mac = options && options.mac;
-
-    const seedIs8Array = seed instanceof Uint8Array;
-
-    const seedIsBuff = seed instanceof Buffer;
-
-    const seedEither = seedIsBuff || seedIs8Array;
-
-    if (seed && seedEither) {
-        if (seed.length < 16) {
-            console.log("UUID Seed array must be at least 16 bytes");
-        } else {
-            buff = seed;
-        }
-    } else {
-        const random_mt = new MersenneTwister();
-
-        buff = new Uint8Array(16);
-
-        for (let i = 0; i < 16; i++) {
-            buff[i] = random_mt.random_int();
-        }
-    }
-
-    const macIs8Array = mac instanceof Uint8Array;
-
-    const macIsBuff = mac instanceof Buffer;
-
-    const macEither = macIsBuff || macIs8Array;
-
-    if (mac != undefined) {
-        if (mac && !macEither) {
-            console.log("UUID Mac array must Uint8Array or Buffer");
-        }
-
-        if (mac.length != 6) {
-            console.log("UUID Mac array must be at least 6 bytes");
-        }
-    }
-
-    var ver = version != undefined ? camp(version) : 4;
-
-    var output = "00000000-0000-0000-0000-000000000000";
-
-    switch (ver) {
-        case 1:
-        case 2:
-        case 3:
-        case 5:
-            var fakeMacBytes = new Uint8Array(6);
-
-            if (mac != undefined) {
-                // @ts-ignore
-                fakeMacBytes = mac;
-            } else {
-                var fakeMac = get_machine_hostname() || "1234";
-
-                var string_add = "\0";
-
-                if (fakeMac.length < 6) {
-                    for (let i = fakeMac.length; i < 6; i++) {
-                        fakeMac += string_add;
-                    }
-                }
-
-                fakeMacBytes = new TextEncoder().encode(fakeMac.slice(0, 6));
-            }
-
-            var uuidTemplate = `llllllll-mmmm-${ver}hhh-yxxx-zzzzzzzzzzzz`;
-
-            var number = 0;
-
-            var numbernib = 0;
-
-            var macnumber = 0;
-
-            var macnnib = 0;
-
-            output = uuidTemplate.replace(/[lmhxyz]/g, function (c) {
-                var r = buff[number] & 0xFF;
-
-                var v = (r & 0x0F);
-
-                switch (c) {
-                    case "l":
-                        if (numbernib == 0) {
-                            v = r >>> 4;
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            number += 1;
-
-                            numbernib = 0;
-                        }
-                        break;
-                    case "m":
-                        if (numbernib == 0) {
-                            v = r >>> 4;
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            number += 1;
-
-                            numbernib = 0;
-                        }
-                        break;
-                    case "h":
-                        if (numbernib == 0) {
-                            v = r >>> 4;
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            number += 1;
-
-                            numbernib = 0;
-                        }
-                        break;
-                    case "x":
-                        if (numbernib == 0) {
-                            v = r >>> 4;
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            number += 1;
-                            
-                            numbernib = 0;
-                        }
-                        break;
-                    case "z":
-                        r = fakeMacBytes[macnumber] & 0xff;
-
-                        if (macnnib == 0) {
-                            v = r >>> 4;
-
-                            macnnib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            macnumber += 1;
-
-                            macnnib = 0;
-                        }
-                        break;
-                    case "y":
-                        if (numbernib == 0) {
-                            v = ((r >>> 4) & 0x3 | 0x8);
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = ((r & 0xF) & 0x3 | 0x8);
-
-                            number += 1;
-
-                            numbernib = 0;
-                        }
-                        break;
-                    default:
-                        if (numbernib == 0) {
-                            v = r >>> 4;
-
-                            numbernib += 1;
-                        }
-                        else {
-                            v = r & 0xF;
-
-                            number += 1;
-
-                            numbernib = 0;
-                        }
-                        break;
-                }
-
-                return v.toString(16);
-            });
-
-            break;
-        case 4:
-            number = 0;
-
-            numbernib = 0;
-
-            uuidTemplate = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
-
-            output = uuidTemplate.replace(/[xy]/g, function (c) {
-                var r = buff[number] & 0xFF;
-
-                if (numbernib == 0) {
-                    r = r >>> 4;
-
-                    numbernib += 1;
-                } else {
-                    r = r & 0xF;
-
-                    number += 1;
-
-                    numbernib = 0;
-                }
-
-                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-
-                return v.toString(16);
-            });
-
-            break;
-        default:
-            break;
-    }
-
-    if (asBuffer) {
-        return _hex_string_to_Buffer(output);
-    }
-
-    return output;
-};
-
-/**
  * Derives the legacy creds key from the built-in (or env supplied) constant.
  *
  * Only kept so creds files from older installs still decrypt — new installs
@@ -576,6 +271,13 @@ function _legacyKey() {
 };
 
 /**
+ * Magic prefix for the v2 creds format: [magic(4)][iv(16)][ciphertext].
+ * Legacy files are [seed(4)][ciphertext] with the IV derived from the seed
+ * via MersenneTwister.
+ */
+const V2_MAGIC = Buffer.from("T2C2");
+
+/**
  * Encryption functions
  */
 class Encryption {
@@ -597,44 +299,25 @@ class Encryption {
     static crypt(creds, key = undefined) {
         const keyBuff = (key instanceof Buffer && key.length == 32) ? key : _legacyKey();
 
-        const seedBuff = randomBytes(4);
-
-        const seed = seedBuff.readUInt32LE();
-
-        const mt = new MersenneTwister(seed ^ 0xffffffff);
-
-        const pull = mt.random_int();
-
-        const amount = (pull & 15) + 1;
-
-        for (let i = 0; i < amount; i++) {
-            mt.random_int();
-        }
-
-        const ivBuff = Buffer.alloc(16, 0);
-
-        for (let i = 0; i < (16 / 4); i++) {
-            ivBuff.writeUInt32LE(mt.random_int(), i * 4)
-        };
+        // v2 format: a fully random IV stored in the file, instead of the
+        // legacy IV expanded from a 4-byte MersenneTwister seed.
+        const ivBuff = randomBytes(16);
 
         const cipher = createCipheriv("aes-256-cbc", keyBuff, ivBuff);
 
         cipher.setAutoPadding(true);
 
-        const encrypted = Buffer.concat([seedBuff, cipher.update(creds), cipher.final()]);
-
-        return encrypted;
+        return Buffer.concat([V2_MAGIC, ivBuff, cipher.update(creds), cipher.final()]);
     };
 
     /**
-     * Check data with 0x7b
+     * Decrypts a legacy-format creds buffer (IV derived from a 4-byte seed).
+     *
      * @param {Buffer} creds - file buffer of creds
-     * @param {Buffer|undefined} key - 32 byte key (falls back to the legacy built-in key)
+     * @param {Buffer} keyBuff - 32 byte key
      * @returns {Buffer}
      */
-    static decrypt(creds, key = undefined) {
-        const keyBuff = (key instanceof Buffer && key.length == 32) ? key : _legacyKey();
-
+    static #decryptLegacy(creds, keyBuff) {
         const seed = creds.readUInt32LE();
 
         const mt = new MersenneTwister(seed ^ 0xffffffff);
@@ -657,8 +340,39 @@ class Encryption {
 
         cipher.setAutoPadding(true);
 
+        return Buffer.concat([cipher.update(creds.subarray(4, creds.length)), cipher.final()]);
+    };
+
+    /**
+     * Check data with 0x7b
+     * @param {Buffer} creds - file buffer of creds
+     * @param {Buffer|undefined} key - 32 byte key (falls back to the legacy built-in key)
+     * @returns {Buffer}
+     */
+    static decrypt(creds, key = undefined) {
+        const keyBuff = (key instanceof Buffer && key.length == 32) ? key : _legacyKey();
+
+        // v2 format first: [magic(4)][iv(16)][ciphertext]
+        if (creds.length > 20 && creds.subarray(0, 4).equals(V2_MAGIC)) {
+            try {
+                const cipher = createDecipheriv("aes-256-cbc", keyBuff, creds.subarray(4, 20));
+
+                cipher.setAutoPadding(true);
+
+                const plain = Buffer.concat([cipher.update(creds.subarray(20)), cipher.final()]);
+
+                if (plain[0] == 0x7B) {
+                    return plain;
+                }
+                // a legacy file could theoretically start with the magic
+                // bytes by chance — fall through and try the legacy path
+            } catch (error) {
+                // fall through and try the legacy path
+            }
+        }
+
         try {
-            return Buffer.concat([cipher.update(creds.subarray(4, creds.length)), cipher.final()]);
+            return this.#decryptLegacy(creds, keyBuff);
         } catch (error) {
             // wrong key or corrupted file — return a buffer that fails the
             // caller's 0x7B check so it's handled as a bad creds file
